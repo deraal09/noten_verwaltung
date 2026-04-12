@@ -3,7 +3,7 @@
 Notenverwaltung - Programm zur Verwaltung von Schülerinnennoten
 Daten werden verschlüsselt gespeichert (.ndat)
 Export als Markdown (.md) oder CSV möglich
-Notenschlüssel: BG (0-10) und IHK (1-6)
+Notenschlüssel: Berufliches Gymnasium (0-15) und Berufsschule (1-6)
 Klausuren mit Punkte-System und Notenschlüssel-CSV
 """
 
@@ -29,11 +29,13 @@ DATA_FILE = os.path.join(_APP_DIR, "noten.ndat")
 HALBJAHRE = ["1. Halbjahr", "2. Halbjahr"]
 DEFAULT_GEWICHTUNG = 60
 ITERATIONS = 100000
-NOTENSCHLUESSEL = {"IHK": (1, 6), "BG": (0, 10)}
+NOTENSCHLUESSEL = {"Berufsschule": (1, 6), "Berufliches Gymnasium": (0, 15)}
 DEFAULT_NS_CSV = {
-    "IHK": "95,1;80,2;65,3;50,4;30,5;0,6",
-    "BG": "95,10;90,9;85,8;80,7;75,6;70,5;65,4;55,3;45,2;30,1;0,0",
+    "Berufsschule": "100,1;99,1.1;97,1.2;95,1.3;93,1.4;91,1.5;90,1.6;89,1.7;88,1.8;87,1.9;85,2;84,2.1;83,2.2;82,2.3;81,2.4;80,2.5;79,2.6;77,2.7;76,2.8;74,2.9;73,3;71,3.1;70,3.2;68,3.3;67,3.4;66,3.5;64,3.6;62,3.7;61,3.8;59,3.9;57,4;55,4.1;54,4.2;52,4.3;50,4.4;49,4.5;47,4.6;45,4.7;43,4.8;41,4.9;39,5;36,5.1;34,5.2;32,5.3;30,5.4;29,5.5;23,5.6;20,5.7;12,5.8;6,5.9;0,6",
+    "Berufliches Gymnasium": "95,15;94,14;89,13;84,12;79,11;74,10;69,9;64,8;59,7;54,6;49,5;44,4;39,3;32,2;26,1;19,0;0,0",
 }
+# Aliase für Abwärtskompatibilität (alte Daten)
+_NS_ALIASES = {"IHK": "Berufsschule", "BG": "Berufliches Gymnasium"}
 
 
 def _derive_key(password, salt):
@@ -87,7 +89,8 @@ class NotenVerwaltung:
 
     def get_notenschluessel(self, sj, k):
         kl = self._get_klasse(sj, k)
-        return kl.get("notenschluessel", "IHK") if kl else "IHK"
+        ns = kl.get("notenschluessel", "Berufsschule") if kl else "Berufsschule"
+        return _NS_ALIASES.get(ns, ns)
 
     def get_notenbereich(self, sj, k):
         return NOTENSCHLUESSEL.get(self.get_notenschluessel(sj, k), (1, 6))
@@ -131,10 +134,12 @@ class NotenVerwaltung:
     def get_ns_csv(self, sj, k):
         kl = self._get_klasse(sj, k)
         if kl is None:
-            return DEFAULT_NS_CSV["IHK"]
+            return DEFAULT_NS_CSV["Berufsschule"]
         csv_str = kl.get("notenschluessel_csv", "")
         if not csv_str:
-            return DEFAULT_NS_CSV.get(kl.get("notenschluessel", "IHK"), DEFAULT_NS_CSV["IHK"])
+            ns = kl.get("notenschluessel", "Berufsschule")
+            ns = _NS_ALIASES.get(ns, ns)
+            return DEFAULT_NS_CSV.get(ns, DEFAULT_NS_CSV["Berufsschule"])
         return csv_str
 
     def set_ns_csv(self, sj, k, csv_str):
@@ -152,7 +157,7 @@ class NotenVerwaltung:
                 for sk, d in kl_data.get("schuelerinnen", {}).items():
                     sk_dict[sk] = {"nachname": d["nachname"], "vorname": d["vorname"], "halbjahre": d["halbjahre"]}
                 sj[s][k] = {
-                    "notenschluessel": kl_data.get("notenschluessel", "IHK"),
+                    "notenschluessel": _NS_ALIASES.get(kl_data.get("notenschluessel", "Berufsschule"), kl_data.get("notenschluessel", "Berufsschule")),
                     "notenschluessel_csv": kl_data.get("notenschluessel_csv", ""),
                     "schuelerinnen": sk_dict,
                     "klausuren": kl_data.get("klausuren", {}),
@@ -168,7 +173,7 @@ class NotenVerwaltung:
                 # Bestimme Datenformat (alt vs. neu)
                 if isinstance(kl_data, dict) and "schuelerinnen" in kl_data:
                     # Neues Format: {notenschluessel, schuelerinnen, klausuren, ...}
-                    ns = kl_data.get("notenschluessel", "IHK")
+                    ns = _NS_ALIASES.get(kl_data.get("notenschluessel", "Berufsschule"), kl_data.get("notenschluessel", "Berufsschule"))
                     ns_csv = kl_data.get("notenschluessel_csv", "")
                     schueler_raw = kl_data["schuelerinnen"]
                     klausuren = kl_data.get("klausuren", {})
@@ -177,7 +182,7 @@ class NotenVerwaltung:
                     # Prüfe ob es Schülerdaten sind (hat "halbjahre" in den Werten)
                     first_val = next(iter(kl_data.values()), None)
                     if isinstance(first_val, dict) and "halbjahre" in first_val:
-                        ns = "IHK"; ns_csv = ""; schueler_raw = kl_data; klausuren = {}
+                        ns = "Berufsschule"; ns_csv = ""; schueler_raw = kl_data; klausuren = {}
                     else:
                         # Unbekanntes Format - überspringen
                         logging.warning(f"Unbekanntes Datenformat für Klasse '{k}' - wird übersprungen")
@@ -332,7 +337,7 @@ class NotenVerwaltung:
         if s in self.schuljahre: del self.schuljahre[s]; return True
         return False
 
-    def klasse_hinzufuegen(self, sj, k, notenschluessel="IHK"):
+    def klasse_hinzufuegen(self, sj, k, notenschluessel="Berufsschule"):
         k = k.strip()
         if not k or sj not in self.schuljahre or k in self.schuljahre[sj]: return False
         self.schuljahre[sj][k] = {"notenschluessel": notenschluessel, "notenschluessel_csv": "", "schuelerinnen": {}, "klausuren": {}}
@@ -529,11 +534,11 @@ class KlasseDialog(_CenteredToplevel):
         ttk.Label(f, text="Klassenname:").grid(row=0, column=0, sticky="w", pady=(0, 5))
         self.e_name = ttk.Entry(f, width=25); self.e_name.grid(row=0, column=1, pady=(0, 5), padx=(5, 0)); self.e_name.focus_set()
         ttk.Label(f, text="Notenschlüssel:").grid(row=1, column=0, sticky="w", pady=(0, 5))
-        self.ns_var = tk.StringVar(value="IHK")
+        self.ns_var = tk.StringVar(value="Berufsschule")
         ns_frame = ttk.Frame(f); ns_frame.grid(row=1, column=1, sticky="w", pady=(0, 5), padx=(5, 0))
         for ns, nb in NOTENSCHLUESSEL.items():
             ttk.Radiobutton(ns_frame, text=f"{ns} (Noten {nb[0]}-{nb[1]})", variable=self.ns_var, value=ns).pack(anchor="w")
-        ttk.Label(f, text="BG = Berufsschule (0-10)\nIHK = Prüfung (1-6)", foreground="gray").grid(row=2, column=0, columnspan=2, pady=(0, 5))
+        ttk.Label(f, text="Berufliches Gymnasium = BG (0-15)\nBerufsschule = IHK (1-6)", foreground="gray").grid(row=2, column=0, columnspan=2, pady=(0, 5))
         bf = ttk.Frame(f); bf.grid(row=3, column=0, columnspan=2)
         ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Button(bf, text="Abbrechen", command=self._cancel, width=10).pack(side=tk.LEFT, padx=5)
@@ -1359,7 +1364,7 @@ def _migrate_old_md():
                 cur_sj = z[13:].strip(); old_data.schuljahre[cur_sj] = {}; cur_kl = cur_sk = cur_hj = None
             elif z.startswith("### Klasse ") and cur_sj:
                 cur_kl = z[11:].strip()
-                old_data.schuljahre[cur_sj][cur_kl] = {"notenschluessel": "IHK", "notenschluessel_csv": "", "schuelerinnen": {}, "klausuren": {}}
+                old_data.schuljahre[cur_sj][cur_kl] = {"notenschluessel": "Berufsschule", "notenschluessel_csv": "", "schuelerinnen": {}, "klausuren": {}}
                 cur_sk = cur_hj = None
             elif z.startswith("#### ") and cur_sj and cur_kl:
                 t = z[5:].split(",", 1); nn = t[0].strip(); vn = t[1].strip() if len(t) > 1 else ""
