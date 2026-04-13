@@ -239,17 +239,19 @@ class NotenVerwaltung:
                     "klausuren": fixed_klausuren
                 }
 
-    def speichern_verschluesselt(self, password):
+    def speichern_verschluesselt(self, password, filepath=None):
         encrypted = encrypt_data(self.to_dict(), password)
-        tmp_file = DATA_FILE + ".tmp"
+        fp = filepath or DATA_FILE
+        tmp_file = fp + ".tmp"
         with open(tmp_file, "wb") as f:
             f.write(encrypted)
-        os.replace(tmp_file, DATA_FILE)
+        os.replace(tmp_file, fp)
 
-    def laden_verschluesselt(self, password):
-        if not os.path.exists(DATA_FILE):
+    def laden_verschluesselt(self, password, filepath=None):
+        fp = filepath or DATA_FILE
+        if not os.path.exists(fp):
             return True
-        with open(DATA_FILE, "rb") as f:
+        with open(fp, "rb") as f:
             raw = f.read()
         data = decrypt_data(raw, password)
         if data is None:
@@ -921,21 +923,27 @@ class NotenschluesselCsvDialog(_CenteredToplevel):
 # Hauptanwendung
 # ---------------------------------------------------------------------------
 class NotenVerwaltungApp:
-    def __init__(self, root, password):
+    def __init__(self, root, password, data_file=None):
         self.root = root; self.root.title("Notenverwaltung")
         self.root.geometry("1100x680"); self.root.minsize(950, 580)
         self.password = password
+        self.data_file = data_file or DATA_FILE
         self.daten = NotenVerwaltung()
-        if os.path.exists(DATA_FILE):
-            if not self.daten.laden_verschluesselt(self.password):
+        if os.path.exists(self.data_file):
+            if not self.daten.laden_verschluesselt(self.password, self.data_file):
                 messagebox.showerror("Fehler", "Falsches Passwort oder beschädigte Daten!")
                 self.root.after(100, self.root.destroy); return
         else:
-            self.daten.speichern_verschluesselt(self.password)
+            self.daten.speichern_verschluesselt(self.password, self.data_file)
         self._build_gui(); self._refresh_sj()
+        self._update_title()
 
     def _save(self):
-        self.daten.speichern_verschluesselt(self.password)
+        self.daten.speichern_verschluesselt(self.password, self.data_file)
+
+    def _update_title(self):
+        fname = os.path.basename(self.data_file) if self.data_file else "noten.ndat"
+        self.root.title(f"Notenverwaltung – {fname}")
 
     def _build_gui(self):
         gm = self.daten.gewichtung_muendlich; gs = 100 - gm
@@ -949,6 +957,9 @@ class NotenVerwaltungApp:
         # Menü
         menubar = tk.Menu(self.root); self.root.config(menu=menubar)
         fm = tk.Menu(menubar, tearoff=0); menubar.add_cascade(label="Datei", menu=fm)
+        fm.add_command(label="Öffnen...", command=self._file_open, accelerator="Strg+O")
+        fm.add_command(label="Speichern unter...", command=self._file_save_as, accelerator="Strg+Shift+S")
+        fm.add_separator()
         fm.add_command(label="Passwort ändern...", command=self._change_password)
         fm.add_separator()
         fm.add_command(label="Export Markdown...", command=self._export_md)
@@ -1005,6 +1016,12 @@ class NotenVerwaltungApp:
 
         hf.columnconfigure(0, weight=1); hf.columnconfigure(1, weight=2); hf.columnconfigure(2, weight=4)
         hf.rowconfigure(1, weight=1)
+
+        # Tastenkürzel
+        self.root.bind("<Control-o>", lambda e: self._file_open())
+        self.root.bind("<Control-O>", lambda e: self._file_open())
+        self.root.bind("<Control-Shift-s>", lambda e: self._file_save_as())
+        self.root.bind("<Control-Shift-S>", lambda e: self._file_save_as())
 
     # ---- Noten-Tab ----
     def _build_noten_tab(self, gm, gs):
@@ -1068,6 +1085,45 @@ class NotenVerwaltungApp:
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
     # ---- Password / Export ----
+    def _file_open(self):
+        """Andere Datendatei öffnen."""
+        fp = filedialog.askopenfilename(
+            defaultextension=".ndat",
+            filetypes=[("Notendatei", "*.ndat"), ("Alle Dateien", "*.*")],
+            title="Notendatei öffnen",
+            initialdir=os.path.dirname(self.data_file) if self.data_file else _APP_DIR
+        )
+        if not fp: return
+        # Passwort für die neue Datei abfragen
+        dlg = PasswordDialog(self.root, title="Passwort eingeben", first_time=False)
+        if dlg.result is None: return
+        new_pw = dlg.result
+        new_data = NotenVerwaltung()
+        if not new_data.laden_verschluesselt(new_pw, fp):
+            messagebox.showerror("Fehler", "Falsches Passwort oder beschädigte Daten!")
+            return
+        self.password = new_pw
+        self.data_file = fp
+        self.daten = new_data
+        self._update_title()
+        self._refresh_sj()
+        self._refresh_noten(None, None)
+        self._refresh_klausuren()
+
+    def _file_save_as(self):
+        """Daten unter neuem Dateinamen speichern."""
+        fp = filedialog.asksaveasfilename(
+            defaultextension=".ndat",
+            filetypes=[("Notendatei", "*.ndat"), ("Alle Dateien", "*.*")],
+            title="Notendatei speichern unter",
+            initialdir=os.path.dirname(self.data_file) if self.data_file else _APP_DIR,
+            initialfile=os.path.basename(self.data_file) if self.data_file else "noten.ndat"
+        )
+        if not fp: return
+        self.data_file = fp
+        self._save()
+        self._update_title()
+
     def _change_password(self):
         dlg = PasswordDialog(self.root, title="Passwort ändern", first_time=False)
         if dlg.result is None: return
@@ -1501,7 +1557,7 @@ def main():
     password = dlg.result
     app = NotenVerwaltungApp(root, password)
     if migrated_data and migrated_data.schuljahre:
-        migrated_data.speichern_verschluesselt(password)
+        migrated_data.speichern_verschluesselt(password, app.data_file)
         app.daten = migrated_data; app._refresh_sj()
     root.mainloop()
 
