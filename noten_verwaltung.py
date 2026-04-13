@@ -55,7 +55,9 @@ def encrypt_data(data_dict, password):
     return base64.b64encode(salt + verify + encrypted)
 
 def decrypt_data(raw_bytes, password):
-    raw = base64.b64decode(raw_bytes)
+    try: raw = base64.b64decode(raw_bytes)
+    except Exception: return None
+    if len(raw) < 48: return None
     salt = raw[:16]; verify = raw[16:48]; encrypted = raw[48:]
     key = _derive_key(password, salt)
     if hashlib.sha256(key).digest() != verify:
@@ -64,7 +66,7 @@ def decrypt_data(raw_bytes, password):
     try:
         json_bytes = zlib.decompress(compressed)
         return json.loads(json_bytes.decode('utf-8'))
-    except Exception:
+    except (zlib.error, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
 
@@ -657,7 +659,7 @@ class SchuelerlisteDialog(_CenteredToplevel):
         ttk.Label(f, text="Schülerinnen:").pack(anchor="w")
         self.text = tk.Text(f, height=15, width=50, font=("Courier", 10))
         self.text.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
-        self.text.insert("1.0", "Müller, Anna\nSchmidt, Berta\nFischer, Christoph\n")
+        self.text.insert("1.0", "")
         ttk.Label(f, text="Tipp: Liste kann aus Excel/CSV kopiert werden", foreground="gray", font=("TkDefaultFont", 8)).pack(anchor="w")
         bf = ttk.Frame(f); bf.pack(fill=tk.X, pady=(15, 0))
         ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.RIGHT, padx=5)
@@ -811,6 +813,38 @@ class KlausurPunkteDialog(_CenteredToplevel):
     def _cancel(self): self.result = None; self.destroy()
 
 
+class _UebertragenDialog(_CenteredToplevel):
+    """Dialog zum Übertragen einer Klasse in ein anderes Schuljahr."""
+    def __init__(self, parent, sj_quelle, kl_name, alle_sj):
+        super().__init__(parent); self.title("Klasse übertragen"); self.resizable(False, False)
+        self.result = None; self.transient(parent); self.grab_set()
+        f = ttk.Frame(self, padding=15); f.pack()
+        ttk.Label(f, text=f"Klasse '{kl_name}' aus Schuljahr '{sj_quelle}'\nübertragen in Schuljahr:", justify="left").grid(row=0, column=0, columnspan=2, pady=(0, 10))
+        andere_sj = sorted(s for s in alle_sj if s != sj_quelle)
+        ttk.Label(f, text="Ziel-Schuljahr:").grid(row=1, column=0, sticky="w", pady=(0, 5))
+        self.sj_var = tk.StringVar()
+        self.sj_cb = ttk.Combobox(f, textvariable=self.sj_var, width=18, values=andere_sj)
+        self.sj_cb.grid(row=1, column=1, pady=(0, 5), padx=(5, 0))
+        if andere_sj: self.sj_var.set(andere_sj[0])
+        self.sj_cb.bind("<Return>", lambda e: self._ok())
+        bf = ttk.Frame(f); bf.grid(row=2, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(bf, text="Neues SJ anlegen", command=self._new_sj, width=14).pack(side=tk.LEFT, padx=5)
+        ttk.Button(bf, text="Abbrechen", command=self._cancel, width=10).pack(side=tk.LEFT, padx=5)
+        self._center(); self.protocol("WM_DELETE_WINDOW", self._cancel); self.wait_window()
+    def _ok(self):
+        ziel = self.sj_var.get().strip()
+        if ziel: self.result = ziel
+        self.destroy()
+    def _new_sj(self):
+        ns = simpledialog.askstring("Neues Schuljahr", "Schuljahr (z.B. 2026/27):", parent=self)
+        if ns and ns.strip():
+            self.sj_var.set(ns.strip())
+            cur = list(self.sj_cb['values']) + [ns.strip()]
+            self.sj_cb['values'] = sorted(set(cur))
+    def _cancel(self): self.result = None; self.destroy()
+
+
 class NotenschluesselCsvDialog(_CenteredToplevel):
     def __init__(self, parent, current_csv, notenschluessel_typ, alle_klassen):
         super().__init__(parent); self.title("Notenschlüssel bearbeiten"); self.resizable(True, True)
@@ -869,9 +903,11 @@ class NotenVerwaltungApp:
         self.root.geometry("1100x680"); self.root.minsize(950, 580)
         self.password = password; self.data_file = data_file or DATA_FILE
         self.daten = NotenVerwaltung()
+        self._init_failed = False
         if os.path.exists(self.data_file):
             if not self.daten.laden_verschluesselt(self.password, self.data_file):
                 messagebox.showerror("Fehler", "Falsches Passwort oder beschädigte Daten!")
+                self._init_failed = True
                 self.root.after(100, self.root.destroy); return
         else:
             self.daten.speichern_verschluesselt(self.password, self.data_file)
@@ -905,7 +941,7 @@ class NotenVerwaltungApp:
         hf = ttk.Frame(self.root, padding=10); hf.pack(fill=tk.BOTH, expand=True)
         # Oben: Einstellungen
         top = ttk.LabelFrame(hf, text="Einstellungen", padding=5)
-        top.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 5))
+        top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 5))
         ttk.Label(top, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
         self.sj_var = tk.StringVar(); self.sj_cb = ttk.Combobox(top, textvariable=self.sj_var, state="readonly", width=12)
         self.sj_cb.pack(side=tk.LEFT, padx=(0, 5)); self.sj_cb.bind("<<ComboboxSelected>>", self._on_sj)
@@ -1049,7 +1085,7 @@ class NotenVerwaltungApp:
     @staticmethod
     def _parse_kl_name(kl_display):
         if kl_display is None: return None
-        if " [" in kl_display: return kl_display[:kl_display.rfind(" [")]
+        if " [" in kl_display: return kl_display.rsplit(" [", 1)[0]
         return kl_display
 
     # ---- Refresh ----
@@ -1077,7 +1113,9 @@ class NotenVerwaltungApp:
         if sj and kl_name and kl_name in self.daten.schuljahre.get(sj, {}):
             faecher = self.daten.fach_sortiert(sj, kl_name)
             self.fach_cb['values'] = faecher
-            if current not in faecher: self.fach_var.set(faecher[0] if faecher else "")
+            if current not in faecher:
+                self.fach_var.set(faecher[0] if faecher else "")
+                self._on_fach(None)
         else:
             self.fach_cb['values'] = []; self.fach_var.set("")
 
@@ -1112,7 +1150,7 @@ class NotenVerwaltungApp:
         klausuren = self.daten.get_klausuren(sj, kl_name, fach, hj)
         for i, n in enumerate(kn_notes):
             kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
-            n_str = f"{n:.0f}" if n == int(n) else f"{n:.1f}"
+            n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
             self.s_lb.insert(tk.END, f"  K: {kname} → {n_str}")
         all_schr = self.daten.get_schriftlich_all(sj, kl_name, fach, sk, hj)
         ss = self.daten.durchschnitt(all_schr)
@@ -1164,7 +1202,7 @@ class NotenVerwaltungApp:
                         ges = sum(ergebnis); pct_raw = ges / ges_max * 100 if ges_max > 0 else 0
                         pct = NotenVerwaltung._round_pct(pct_raw); note = NotenVerwaltung.ns_csv_lookup(pct, csv_str)
                         vals.append(f"{ges}/{ges_max}"); vals.append(f"{pct}")
-                        n_str = f"{note:.0f}" if note is not None and note == int(note) else (f"{note:.1f}" if note is not None else "-")
+                        n_str = f"{note:.0f}" if note is not None and float(note).is_integer() else (f"{note:.1f}" if note is not None else "-")
                         vals.append(n_str)
                     else: vals.extend(["-", "-", "-"])
                     self.kl_tree.insert("", tk.END, values=vals)
@@ -1226,17 +1264,17 @@ class NotenVerwaltungApp:
         sj, kl = self._sj(), self._kl()
         if not sj or not kl: messagebox.showwarning("Warnung", "Bitte Schuljahr und Klasse auswählen!"); return
         kl_name = self._parse_kl_name(kl)
-        andere_sj = [s for s in sorted(self.daten.schuljahre) if s != sj]
-        if not andere_sj: messagebox.showinfo("Hinweis", "Kein anderes Schuljahr vorhanden!\nBitte zuerst ein neues Schuljahr anlegen."); return
-        dlg = simpledialog.askstring("Klasse übertragen",
-            f"Klasse '{kl_name}' aus Schuljahr '{sj}' übertragen in Schuljahr:",
-            parent=self.root)
-        if dlg is None or not dlg.strip(): return
-        ziel = dlg.strip()
+        if len(self.daten.schuljahre) < 2:
+            if messagebox.askyesno("Neues Schuljahr", "Kein anderes Schuljahr vorhanden.\nNeues Schuljahr anlegen?"):
+                ns = simpledialog.askstring("Neues Schuljahr", "Schuljahr (z.B. 2026/27):", parent=self.root)
+                if ns and ns.strip() and self.daten.schuljahr_hinzufuegen(ns.strip()):
+                    self._save(); self._refresh_sj()
+            return
+        dlg = _UebertragenDialog(self.root, sj, kl_name, self.daten.schuljahre)
+        if dlg.result is None: return
+        ziel = dlg.result
         if ziel not in self.daten.schuljahre:
-            if messagebox.askyesno("Neues Schuljahr", f"Schuljahr '{ziel}' existiert nicht. Anlegen?"):
-                self.daten.schuljahr_hinzufuegen(ziel)
-            else: return
+            self.daten.schuljahr_hinzufuegen(ziel); self._save(); self._refresh_sj()
         if not self.daten.klasse_uebertragen(sj, kl_name, ziel):
             messagebox.showwarning("Warnung", f"Klasse '{kl_name}' existiert bereits in Schuljahr '{ziel}'!"); return
         self._save(); messagebox.showinfo("OK", f"Klasse '{kl_name}' nach '{ziel}' übertragen (Schüler + Fächer, ohne Noten).")
