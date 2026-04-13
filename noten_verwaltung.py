@@ -352,6 +352,22 @@ class NotenVerwaltung:
         if sj in self.schuljahre and k in self.schuljahre[sj]: del self.schuljahre[sj][k]; return True
         return False
 
+    def klasse_uebertragen(self, sj_quelle, k, sj_ziel):
+        """Überträgt eine Klasse (Schüler+Faecher ohne Noten) in ein anderes Schuljahr."""
+        kl = self._get_klasse(sj_quelle, k)
+        if kl is None or sj_ziel not in self.schuljahre: return False
+        if k in self.schuljahre[sj_ziel]: return False
+        schueler = {sk: {"nachname": d["nachname"], "vorname": d["vorname"]} for sk, d in kl.get("schuelerinnen", {}).items()}
+        faecher = {}
+        for fn in kl.get("faecher", {}):
+            faecher[fn] = {"halbjahre": {h: {"noten": {}} for h in HALBJAHRE}, "klausuren": {}}
+        self.schuljahre[sj_ziel][k] = {
+            "notenschluessel": kl.get("notenschluessel", "IHK"),
+            "notenschluessel_csv": kl.get("notenschluessel_csv", ""),
+            "schuelerinnen": schueler, "faecher": faecher,
+        }
+        return True
+
     @staticmethod
     def _key(nn, vn): return f"{nn}, {vn}"
 
@@ -920,6 +936,7 @@ class NotenVerwaltungApp:
         self.kl_lb.pack(fill=tk.BOTH, expand=True); self.kl_lb.bind("<<ListboxSelect>>", self._on_kl)
         bf = ttk.Frame(kf); bf.pack(fill=tk.X, pady=(5, 0))
         ttk.Button(bf, text="Hinzufügen", command=self._kl_add).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        ttk.Button(bf, text="Übertragen", command=self._kl_uebertragen).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(bf, text="Löschen", command=self._kl_del).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         # Mitte: Schülerinnen
         sf = ttk.LabelFrame(hf, text="Schülerinnen", padding=5); sf.grid(row=1, column=1, sticky="nsew", padx=3)
@@ -1204,6 +1221,26 @@ class NotenVerwaltungApp:
         kl_name = self._parse_kl_name(kl)
         if not messagebox.askyesno("Bestätigung", f"Klasse '{kl_name}' wirklich löschen?"): return
         self.daten.klasse_loeschen(sj, kl_name); self._save(); self._refresh_kl(); self._refresh_fach(None); self._refresh_sk(None); self._refresh_noten(None, None); self._refresh_klausuren()
+
+    def _kl_uebertragen(self):
+        sj, kl = self._sj(), self._kl()
+        if not sj or not kl: messagebox.showwarning("Warnung", "Bitte Schuljahr und Klasse auswählen!"); return
+        kl_name = self._parse_kl_name(kl)
+        andere_sj = [s for s in sorted(self.daten.schuljahre) if s != sj]
+        if not andere_sj: messagebox.showinfo("Hinweis", "Kein anderes Schuljahr vorhanden!\nBitte zuerst ein neues Schuljahr anlegen."); return
+        dlg = simpledialog.askstring("Klasse übertragen",
+            f"Klasse '{kl_name}' aus Schuljahr '{sj}' übertragen in Schuljahr:",
+            parent=self.root)
+        if dlg is None or not dlg.strip(): return
+        ziel = dlg.strip()
+        if ziel not in self.daten.schuljahre:
+            if messagebox.askyesno("Neues Schuljahr", f"Schuljahr '{ziel}' existiert nicht. Anlegen?"):
+                self.daten.schuljahr_hinzufuegen(ziel)
+            else: return
+        if not self.daten.klasse_uebertragen(sj, kl_name, ziel):
+            messagebox.showwarning("Warnung", f"Klasse '{kl_name}' existiert bereits in Schuljahr '{ziel}'!"); return
+        self._save(); messagebox.showinfo("OK", f"Klasse '{kl_name}' nach '{ziel}' übertragen (Schüler + Fächer, ohne Noten).")
+        self._refresh_sj(); self.sj_var.set(ziel); self._on_sj(None)
 
     def _sk_add(self):
         sj, kl = self._sj(), self._kl()
