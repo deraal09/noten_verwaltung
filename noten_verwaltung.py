@@ -5,6 +5,7 @@ Daten werden verschlüsselt gespeichert (.ndat)
 Export als Markdown (.md) oder CSV möglich
 Notenschlüssel: BG (0-15) und IHK (1-6)
 Klausuren mit Punkte-System und Notenschlüssel-CSV
+Unterrichtsleistungen mit Punkte-System (fließen in Unterrichtsleistung ein)
 Fächer mit eigenen Noten und Klausuren pro Klasse
 """
 
@@ -153,7 +154,11 @@ class NotenVerwaltung:
                     sk_dict[sk] = {"nachname": d["nachname"], "vorname": d["vorname"]}
                 faecher = {}
                 for fn, fd in kl_data.get("faecher", {}).items():
-                    faecher[fn] = {"halbjahre": fd.get("halbjahre", {}), "klausuren": fd.get("klausuren", {})}
+                    faecher[fn] = {
+                        "halbjahre": fd.get("halbjahre", {}),
+                        "klausuren": fd.get("klausuren", {}),
+                        "unterrichtsleistungen": fd.get("unterrichtsleistungen", {}),
+                    }
                 sj[s][k] = {
                     "notenschluessel": _NS_ALIASES.get(kl_data.get("notenschluessel", "IHK"), kl_data.get("notenschluessel", "IHK")),
                     "notenschluessel_csv": kl_data.get("notenschluessel_csv", ""),
@@ -168,7 +173,6 @@ class NotenVerwaltung:
         for s, klasses in data.get("schuljahre", {}).items():
             self.schuljahre[s] = {}
             for k, kl_data in klasses.items():
-                # Schüler laden
                 schueler = {}
                 if isinstance(kl_data, dict) and "schuelerinnen" in kl_data:
                     schueler_raw = kl_data["schuelerinnen"]
@@ -177,12 +181,10 @@ class NotenVerwaltung:
                     for sk, d in schueler_raw.items():
                         if not isinstance(d, dict): continue
                         schueler[sk] = {"nachname": d.get("nachname", ""), "vorname": d.get("vorname", "")}
-                    # Fächer laden (neues Format)
                     faecher = {}
                     faecher_raw = kl_data.get("faecher", {})
                     for fn, fd in faecher_raw.items():
                         faecher[fn] = self._parse_fach(fd)
-                    # Migration: altes Format mit Noten in schuelerinnen und klausuren auf Klassenebene
                     if not faecher_raw:
                         faecher = self._migrate_old_format(kl_data, schueler)
                 elif isinstance(kl_data, dict):
@@ -225,12 +227,22 @@ class NotenVerwaltung:
                         "ergebnisse": klausur.get("ergebnisse", {}),
                     })
             klausuren[hj] = fixed
-        return {"halbjahre": halbjahre, "klausuren": klausuren}
+        unterrichtsleistungen = {}
+        for hj, ulist in fd.get("unterrichtsleistungen", {}).items():
+            fixed = []
+            for ul in (ulist if isinstance(ulist, list) else []):
+                if isinstance(ul, dict):
+                    fixed.append({
+                        "name": ul.get("name", ""),
+                        "max_punkte_pro_aufgabe": ul.get("max_punkte_pro_aufgabe", []),
+                        "ergebnisse": ul.get("ergebnisse", {}),
+                    })
+            unterrichtsleistungen[hj] = fixed
+        return {"halbjahre": halbjahre, "klausuren": klausuren, "unterrichtsleistungen": unterrichtsleistungen}
 
     def _migrate_old_format(self, kl_data, schueler):
         """Migriert altes Format (Noten in schuelerinnen, klausuren auf Klassenebene) zu Fächern."""
-        fach = {"halbjahre": {}, "klausuren": {}}
-        # Noten aus schuelerinnen migrieren
+        fach = {"halbjahre": {}, "klausuren": {}, "unterrichtsleistungen": {}}
         for sk, d in (kl_data.get("schuelerinnen", kl_data) if isinstance(kl_data, dict) else {}).items():
             if not isinstance(d, dict): continue
             for hj in HALBJAHRE:
@@ -241,7 +253,6 @@ class NotenVerwaltung:
                     "muendlich": hj_data.get("muendlich", []),
                     "schriftlich": hj_data.get("schriftlich", []),
                 }
-        # Klausuren migrieren
         for hj, klist in kl_data.get("klausuren", {}).items():
             fixed = []
             for klausur in (klist if isinstance(klist, list) else []):
@@ -272,7 +283,7 @@ class NotenVerwaltung:
 
     # ---- Export ----
     def export_markdown(self, filepath):
-        z = ["# Notenverwaltung", "", f"Gewichtung Mündlich: {self.gewichtung_muendlich}%", ""]
+        z = ["# Notenverwaltung", "", f"Gewichtung Unterrichtsleistung: {self.gewichtung_muendlich}%", ""]
         for sj in sorted(self.schuljahre):
             z.append(f"## Schuljahr {sj}"); z.append("")
             for kn in sorted(self.schuljahre[sj]):
@@ -289,6 +300,13 @@ class NotenVerwaltung:
                                 max_p = sum(kl["max_punkte_pro_aufgabe"])
                                 z.append(f"- {kl['name']} (max. {max_p} Punkte)")
                             z.append("")
+                        uls = fach.get("unterrichtsleistungen", {}).get(hj, [])
+                        if uls:
+                            z.append(f"**Unterrichtsleistungen {hj}:**")
+                            for ul in uls:
+                                max_p = sum(ul["max_punkte_pro_aufgabe"])
+                                z.append(f"- {ul['name']} (max. {max_p} Punkte)")
+                            z.append("")
                     for sk in self.schuelerin_sortiert(sj, kn):
                         d = self.schuljahre[sj][kn]["schuelerinnen"][sk]
                         for hj in HALBJAHRE:
@@ -296,9 +314,12 @@ class NotenVerwaltung:
                             m = noten.get("muendlich", [])
                             s_manual = noten.get("schriftlich", [])
                             kn_notes = self.get_klausur_noten(sj, kn, fn, sk, hj)
-                            if m or s_manual or kn_notes:
+                            ul_notes = self.get_ul_noten(sj, kn, fn, sk, hj)
+                            if m or s_manual or kn_notes or ul_notes:
                                 z.append(f"**{d['nachname']}, {d['vorname']}** – {fn} – {hj}")
-                                z.append(f"- Mündlich: {', '.join(str(n) for n in m)}")
+                                z.append(f"- Unterrichtsleistung (manuell): {', '.join(str(n) for n in m)}")
+                                if ul_notes:
+                                    z.append(f"- Unterrichtsleistung (bewertet): {', '.join(str(n) for n in ul_notes)}")
                                 if kn_notes:
                                     z.append(f"- Schriftlich (manuell): {', '.join(str(n) for n in s_manual)}")
                                     z.append(f"- Schriftlich (Klausuren): {', '.join(str(n) for n in kn_notes)}")
@@ -314,8 +335,9 @@ class NotenVerwaltung:
         with open(filepath, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f, delimiter=";")
             w.writerow(["Schuljahr", "Klasse", "Fach", "Notenschlüssel", "Nachname", "Vorname", "Halbjahr",
-                         "Mündliche Noten", "Schriftl. Noten (manuell)", "Schriftl. Noten (Klausuren)",
-                         "Durchschnitt Mündlich", "Durchschnitt Schriftlich", "Gesamtnote Halbjahr"])
+                         "Unterrichtsleistung (manuell)", "Unterrichtsleistung (bewertet)",
+                         "Schriftl. Noten (manuell)", "Schriftl. Noten (Klausuren)",
+                         "Durchschnitt Unterrichtsleistung", "Durchschnitt Schriftlich", "Gesamtnote Halbjahr"])
             for sj in sorted(self.schuljahre):
                 for kn in sorted(self.schuljahre[sj]):
                     ns = self.get_notenschluessel(sj, kn)
@@ -323,12 +345,13 @@ class NotenVerwaltung:
                         for sk in self.schuelerin_sortiert(sj, kn):
                             d = self.schuljahre[sj][kn]["schuelerinnen"][sk]
                             for hj in HALBJAHRE:
-                                dm = self.durchschnitt(self._get_muendlich(sj, kn, fn, sk, hj))
+                                dm = self.durchschnitt(self.get_ul_all(sj, kn, fn, sk, hj))
                                 all_schr = self.get_schriftlich_all(sj, kn, fn, sk, hj)
                                 ds = self.durchschnitt(all_schr)
                                 gh = self.gesamtnote_hj(sj, kn, fn, sk, hj)
                                 w.writerow([sj, kn, fn, ns, d["nachname"], d["vorname"], hj,
                                     " | ".join(str(n) for n in self._get_muendlich(sj, kn, fn, sk, hj)),
+                                    " | ".join(str(n) for n in self.get_ul_noten(sj, kn, fn, sk, hj)),
                                     " | ".join(str(n) for n in self._get_schriftlich(sj, kn, fn, sk, hj)),
                                     " | ".join(str(n) for n in self.get_klausur_noten(sj, kn, fn, sk, hj)),
                                     f"{dm:.2f}" if dm else "-", f"{ds:.2f}" if ds else "-",
@@ -355,14 +378,13 @@ class NotenVerwaltung:
         return False
 
     def klasse_uebertragen(self, sj_quelle, k, sj_ziel):
-        """Überträgt eine Klasse (Schüler+Faecher ohne Noten) in ein anderes Schuljahr."""
         kl = self._get_klasse(sj_quelle, k)
         if kl is None or sj_ziel not in self.schuljahre: return False
         if k in self.schuljahre[sj_ziel]: return False
         schueler = {sk: {"nachname": d["nachname"], "vorname": d["vorname"]} for sk, d in kl.get("schuelerinnen", {}).items()}
         faecher = {}
         for fn in kl.get("faecher", {}):
-            faecher[fn] = {"halbjahre": {h: {"noten": {}} for h in HALBJAHRE}, "klausuren": {}}
+            faecher[fn] = {"halbjahre": {h: {"noten": {}} for h in HALBJAHRE}, "klausuren": {}, "unterrichtsleistungen": {}}
         self.schuljahre[sj_ziel][k] = {
             "notenschluessel": kl.get("notenschluessel", "IHK"),
             "notenschluessel_csv": kl.get("notenschluessel_csv", ""),
@@ -404,6 +426,7 @@ class NotenVerwaltung:
         kl["faecher"][fach] = {
             "halbjahre": {h: {"noten": {}} for h in HALBJAHRE},
             "klausuren": {},
+            "unterrichtsleistungen": {},
         }
         return True
 
@@ -431,7 +454,6 @@ class NotenVerwaltung:
         return f.get("halbjahre", {}).get(hj, {}).get("noten", {}).get(sk, {}).get("schriftlich", [])
 
     def _ensure_noten_dict(self, sj, k, fach, sk, hj):
-        """Stellt sicher, dass der Noten-Eintrag existiert."""
         f = self._get_fach(sj, k, fach)
         if f is None: return None
         hj_data = f.setdefault("halbjahre", {}).setdefault(hj, {"noten": {}})
@@ -521,6 +543,68 @@ class NotenVerwaltung:
         manual = self._get_schriftlich(sj, k, fach, sk, hj)
         return manual + self.get_klausur_noten(sj, k, fach, sk, hj)
 
+    # ---- CRUD Unterrichtsleistungen (pro Fach) ----
+    def ul_hinzufuegen(self, sj, k, fach, hj, name, max_punkte_pro_aufgabe):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return False
+        if "unterrichtsleistungen" not in f: f["unterrichtsleistungen"] = {}
+        if hj not in f["unterrichtsleistungen"]: f["unterrichtsleistungen"][hj] = []
+        for ul in f["unterrichtsleistungen"][hj]:
+            if ul["name"] == name: return False
+        f["unterrichtsleistungen"][hj].append({"name": name, "max_punkte_pro_aufgabe": max_punkte_pro_aufgabe, "ergebnisse": {}})
+        return True
+
+    def ul_loeschen(self, sj, k, fach, hj, idx):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return False
+        ulist = f.get("unterrichtsleistungen", {}).get(hj, [])
+        if 0 <= idx < len(ulist): ulist.pop(idx); return True
+        return False
+
+    def get_unterrichtsleistungen(self, sj, k, fach, hj):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return []
+        return f.get("unterrichtsleistungen", {}).get(hj, [])
+
+    def ul_punkte_setzen(self, sj, k, fach, hj, ulidx, sk, punkte):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return False
+        ulist = f.get("unterrichtsleistungen", {}).get(hj, [])
+        if not (0 <= ulidx < len(ulist)): return False
+        ul = ulist[ulidx]
+        if len(punkte) != len(ul["max_punkte_pro_aufgabe"]): return False
+        for i, p in enumerate(punkte):
+            if p is not None and (p < 0 or p > ul["max_punkte_pro_aufgabe"][i]): return False
+        ul["ergebnisse"][sk] = punkte
+        return True
+
+    def ul_note_berechnen(self, sj, k, fach, hj, ulidx, sk):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return None
+        ulist = f.get("unterrichtsleistungen", {}).get(hj, [])
+        if not (0 <= ulidx < len(ulist)): return None
+        ul = ulist[ulidx]
+        if sk not in ul["ergebnisse"]: return None
+        punkte = ul["ergebnisse"][sk]
+        if any(p is None for p in punkte): return None
+        max_p = sum(ul["max_punkte_pro_aufgabe"])
+        if max_p == 0: return None
+        prozent = self._round_pct(sum(punkte) / max_p * 100)
+        return self.ns_csv_lookup(prozent, self.get_ns_csv(sj, k))
+
+    def get_ul_noten(self, sj, k, fach, sk, hj):
+        uls = self.get_unterrichtsleistungen(sj, k, fach, hj)
+        noten = []
+        for i in range(len(uls)):
+            note = self.ul_note_berechnen(sj, k, fach, hj, i, sk)
+            if note is not None: noten.append(note)
+        return noten
+
+    def get_ul_all(self, sj, k, fach, sk, hj):
+        """Alle Unterrichtsleistungs-Noten: manuell + bewertete UL."""
+        manual = self._get_muendlich(sj, k, fach, sk, hj)
+        return manual + self.get_ul_noten(sj, k, fach, sk, hj)
+
     # ---- Berechnungen ----
     @staticmethod
     def durchschnitt(noten):
@@ -534,14 +618,14 @@ class NotenVerwaltung:
         return sm if sm is not None else ss
 
     def gesamtnote_hj(self, sj, k, fach, sk, hj):
-        muendlich = self._get_muendlich(sj, k, fach, sk, hj)
+        ul_all = self.get_ul_all(sj, k, fach, sk, hj)
         schriftlich = self.get_schriftlich_all(sj, k, fach, sk, hj)
-        return self._gesamt(self.durchschnitt(muendlich), self.durchschnitt(schriftlich))
+        return self._gesamt(self.durchschnitt(ul_all), self.durchschnitt(schriftlich))
 
     def gesamtnote_jahr(self, sj, k, fach, sk):
         gm, gs = [], []
         for h in HALBJAHRE:
-            gm.extend(self._get_muendlich(sj, k, fach, sk, h))
+            gm.extend(self.get_ul_all(sj, k, fach, sk, h))
             gs.extend(self.get_schriftlich_all(sj, k, fach, sk, h))
         return self._gesamt(self.durchschnitt(gm), self.durchschnitt(gs))
 
@@ -685,11 +769,11 @@ class SchuelerlisteDialog(_CenteredToplevel):
 
 
 class KlausurDialog(_CenteredToplevel):
-    def __init__(self, parent):
-        super().__init__(parent); self.title("Klausur hinzufügen"); self.resizable(False, False)
+    def __init__(self, parent, title="Klausur hinzufügen"):
+        super().__init__(parent); self.title(title); self.resizable(False, False)
         self.result = None; self.transient(parent); self.grab_set()
         f = ttk.Frame(self, padding=15); f.pack()
-        ttk.Label(f, text="Name der Klausur:").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        ttk.Label(f, text="Name:").grid(row=0, column=0, sticky="w", pady=(0, 5))
         self.e_name = ttk.Entry(f, width=25); self.e_name.grid(row=0, column=1, pady=(0, 5), padx=(5, 0)); self.e_name.focus_set()
         ttk.Label(f, text="Anzahl Aufgaben:").grid(row=1, column=0, sticky="w", pady=(0, 5))
         self.e_anz = ttk.Spinbox(f, from_=1, to=20, width=5); self.e_anz.grid(row=1, column=1, sticky="w", pady=(0, 5), padx=(5, 0)); self.e_anz.set(3)
@@ -714,14 +798,15 @@ class KlausurDialog(_CenteredToplevel):
     def _cancel(self): self.result = None; self.destroy()
 
 
-class KlausurPunkteDialog(_CenteredToplevel):
-    def __init__(self, parent, klausur_name, max_punkte_pro_aufgabe, schuelerinnen, existing_ergebnisse, ns_csv_str):
-        super().__init__(parent); self.title(f"Punkte bearbeiten: {klausur_name}")
+class PunkteDialog(_CenteredToplevel):
+    """Dialog zum Bearbeiten von Punkten für Klausuren oder Unterrichtsleistungen."""
+    def __init__(self, parent, title, name, max_punkte_pro_aufgabe, schuelerinnen, existing_ergebnisse, ns_csv_str):
+        super().__init__(parent); self.title(title)
         self.geometry("750x500"); self.minsize(600, 400); self.transient(parent); self.grab_set()
         self.max_punkte = max_punkte_pro_aufgabe; self.schuelerinnen = schuelerinnen
         self.existing_ergebnisse = existing_ergebnisse; self.ns_csv = ns_csv_str; self.result = None
         hf = ttk.Frame(self, padding=5); hf.pack(fill=tk.X)
-        ttk.Label(hf, text=f"Klausur: {klausur_name}", font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
+        ttk.Label(hf, text=f"{name}", font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
         ges_max = sum(max_punkte_pro_aufgabe)
         ttk.Label(hf, text=f"  |  Max. Punkte: {ges_max} ({', '.join(str(p) for p in max_punkte_pro_aufgabe)})", foreground="gray").pack(side=tk.LEFT)
         container = ttk.Frame(self); container.pack(fill=tk.BOTH, expand=True, padx=5)
@@ -814,7 +899,6 @@ class KlausurPunkteDialog(_CenteredToplevel):
 
 
 class _UebertragenDialog(_CenteredToplevel):
-    """Dialog zum Übertragen einer Klasse in ein anderes Schuljahr."""
     def __init__(self, parent, sj_quelle, kl_name, alle_sj):
         super().__init__(parent); self.title("Klasse übertragen"); self.resizable(False, False)
         self.result = None; self.transient(parent); self.grab_set()
@@ -959,7 +1043,7 @@ class NotenVerwaltungApp:
         ttk.Button(top, text="+", width=3, command=self._fach_add).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(top, text="−", width=3, command=self._fach_del).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(top, text="Gewichtung Mündlich:").pack(side=tk.LEFT, padx=(5, 3))
+        ttk.Label(top, text="Gewichtung Unterrichtsleistung:").pack(side=tk.LEFT, padx=(5, 3))
         self.gw_var = tk.StringVar(value=str(gm))
         self.gw_sb = ttk.Spinbox(top, from_=0, to=100, width=4, textvariable=self.gw_var, command=self._on_gw)
         self.gw_sb.pack(side=tk.LEFT, padx=(0, 2))
@@ -984,7 +1068,7 @@ class NotenVerwaltungApp:
         ttk.Button(bf2, text="Löschen", command=self._sk_del).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         # Rechts: Notebook
         self.nb = ttk.Notebook(hf); self.nb.grid(row=1, column=2, sticky="nsew", padx=(3, 0))
-        self._build_noten_tab(gm, gs); self._build_klausuren_tab()
+        self._build_noten_tab(gm, gs); self._build_klausuren_tab(); self._build_ul_tab()
         hf.columnconfigure(0, weight=1); hf.columnconfigure(1, weight=2); hf.columnconfigure(2, weight=4)
         hf.rowconfigure(1, weight=1)
         # Tastenkürzel
@@ -999,13 +1083,14 @@ class NotenVerwaltungApp:
         self.info_lbl = ttk.Label(nf, text="Bitte eine Schülerin auswählen", style="H.TLabel")
         self.info_lbl.pack(anchor="w", pady=(0, 2))
         self.ns_lbl = ttk.Label(nf, text="", style="NS.TLabel"); self.ns_lbl.pack(anchor="w", pady=(0, 5))
-        self.m_frame = ttk.LabelFrame(nf, text=f"Mündliche Noten ({gm}%)", padding=5)
+        self.m_frame = ttk.LabelFrame(nf, text=f"Unterrichtsleistung ({gm}%)", padding=5)
         self.m_frame.pack(fill=tk.BOTH, expand=True)
         self.m_lb = tk.Listbox(self.m_frame, height=5, exportselection=False); self.m_lb.pack(fill=tk.BOTH, expand=True)
         mbf = ttk.Frame(self.m_frame); mbf.pack(fill=tk.X, pady=(5, 0))
         self.m_sp = ttk.Spinbox(mbf, from_=1, to=6, width=5); self.m_sp.pack(side=tk.LEFT, padx=(0, 5)); self.m_sp.set(1)
         ttk.Button(mbf, text="Note eintragen", command=lambda: self._note_add("muendlich")).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(mbf, text="Löschen", command=lambda: self._note_del("muendlich")).pack(side=tk.LEFT)
+        ttk.Label(mbf, text="(Manuell – bewertete UL siehe Tab Unterrichtsleistungen)", foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
         self.m_avg = ttk.Label(self.m_frame, text="Durchschnitt: -"); self.m_avg.pack(anchor="w", pady=(5, 0))
         self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
         self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
@@ -1017,7 +1102,7 @@ class NotenVerwaltungApp:
         ttk.Label(sbf, text="(Manuell – Klausurnoten siehe Tab Klausuren)", foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
         self.s_avg = ttk.Label(self.s_frame, text="Durchschnitt: -"); self.s_avg.pack(anchor="w", pady=(5, 0))
         self.g_lbl = ttk.Label(nf, text="Gesamtnote: -", style="G.TLabel"); self.g_lbl.pack(anchor="w", pady=(10, 0))
-        self.gw_info = ttk.Label(nf, text=f"({gm}% mündlich + {gs}% schriftlich)", style="I.TLabel"); self.gw_info.pack(anchor="w")
+        self.gw_info = ttk.Label(nf, text=f"({gm}% Unterrichtsleistung + {gs}% schriftlich)", style="I.TLabel"); self.gw_info.pack(anchor="w")
         self.j_lbl = ttk.Label(nf, text="Jahresnote: -", style="J.TLabel"); self.j_lbl.pack(anchor="w", pady=(8, 0))
         ttk.Label(nf, text="(Gesamtnote über beide Halbjahre)", style="I.TLabel").pack(anchor="w")
 
@@ -1040,6 +1125,24 @@ class NotenVerwaltungApp:
         self.kl_tree.configure(yscrollcommand=tree_scroll.set)
         self.kl_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+    # ---- Unterrichtsleistungen-Tab ----
+    def _build_ul_tab(self):
+        uf = ttk.Frame(self.nb, padding=5); self.nb.add(uf, text="  Unterrichtsleistungen  ")
+        top = ttk.Frame(uf); top.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(top, text="Unterrichtsleistungen:", style="H.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        self.ul_lb = tk.Listbox(top, height=6, exportselection=False, width=40)
+        self.ul_lb.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.ul_lb.bind("<<ListboxSelect>>", self._on_ul_select)
+        btn_frame = ttk.Frame(top); btn_frame.pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Hinzufügen", command=self._ul_add).pack(fill=tk.X, pady=1)
+        ttk.Button(btn_frame, text="Löschen", command=self._ul_del).pack(fill=tk.X, pady=1)
+        ttk.Button(btn_frame, text="Punkte\nbearbeiten", command=self._ul_punkte).pack(fill=tk.X, pady=1)
+        self.ul_tree = ttk.Treeview(uf, columns=("info",), show="headings", height=10)
+        self.ul_tree.heading("info", text="Keine Unterrichtsleistung ausgewählt"); self.ul_tree.column("info", width=400)
+        tree_scroll = ttk.Scrollbar(uf, orient=tk.VERTICAL, command=self.ul_tree.yview)
+        self.ul_tree.configure(yscrollcommand=tree_scroll.set)
+        self.ul_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
     # ---- Password / Export ----
     def _file_open(self):
         fp = filedialog.askopenfilename(defaultextension=".ndat", filetypes=[("Notendatei", "*.ndat"), ("Alle Dateien", "*.*")], title="Notendatei öffnen",
@@ -1051,7 +1154,7 @@ class NotenVerwaltungApp:
         if not new_data.laden_verschluesselt(dlg.result, fp):
             messagebox.showerror("Fehler", "Falsches Passwort oder beschädigte Daten!"); return
         self.password = dlg.result; self.data_file = fp; self.daten = new_data
-        self._update_title(); self._refresh_sj(); self._refresh_noten(None, None); self._refresh_klausuren()
+        self._update_title(); self._refresh_sj(); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
 
     def _file_save_as(self):
         fp = filedialog.asksaveasfilename(defaultextension=".ndat", filetypes=[("Notendatei", "*.ndat"), ("Alle Dateien", "*.*")], title="Notendatei speichern unter",
@@ -1090,7 +1193,7 @@ class NotenVerwaltungApp:
 
     # ---- Refresh ----
     def _refresh_all(self):
-        self._refresh_noten(self._kl(), self._sk()); self._refresh_klausuren()
+        self._refresh_noten(self._kl(), self._sk()); self._refresh_klausuren(); self._refresh_ul()
 
     def _refresh_sj(self):
         sl = sorted(self.daten.schuljahre.keys()); self.sj_cb['values'] = sl
@@ -1138,10 +1241,18 @@ class NotenVerwaltungApp:
         d = sd[sk]; ns = self.daten.get_notenschluessel(sj, kl_name); nb = self.daten.get_notenbereich(sj, kl_name)
         self.info_lbl.config(text=f"{d['nachname']}, {d['vorname']} – {fach} ({kl_name}) — {hj}")
         self.ns_lbl.config(text=f"Notenschlüssel: {ns} (Noten {nb[0]}–{nb[1]})")
-        # Mündlich
+        # Unterrichtsleistung (manuell)
         muendlich = self.daten._get_muendlich(sj, kl_name, fach, sk, hj)
         for i, n in enumerate(muendlich): self.m_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        sm = self.daten.durchschnitt(muendlich)
+        # Unterrichtsleistung (bewertet)
+        ul_notes = self.daten.get_ul_noten(sj, kl_name, fach, sk, hj)
+        uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
+        for i, n in enumerate(ul_notes):
+            uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
+            n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
+            self.m_lb.insert(tk.END, f"  UL: {uname} → {n_str}")
+        ul_all = self.daten.get_ul_all(sj, kl_name, fach, sk, hj)
+        sm = self.daten.durchschnitt(ul_all)
         self.m_avg.config(text=f"Durchschnitt: {sm:.2f}" if sm is not None else "Durchschnitt: -")
         # Schriftlich
         schriftlich = self.daten._get_schriftlich(sj, kl_name, fach, sk, hj)
@@ -1209,18 +1320,67 @@ class NotenVerwaltungApp:
         else:
             self.kl_tree["columns"] = ["info"]; self.kl_tree.heading("info", text="Keine Klausuren vorhanden"); self.kl_tree.column("info", width=400)
 
+    def _refresh_ul(self, keep_selection=None):
+        self._refreshing_ul = True
+        try: self._refresh_ul_impl(keep_selection)
+        finally: self._refreshing_ul = False
+
+    def _refresh_ul_impl(self, keep_selection):
+        if keep_selection is None:
+            sel = self.ul_lb.curselection(); keep_selection = sel[0] if sel else None
+        self.ul_lb.delete(0, tk.END)
+        sj, hj, kl, fach = self._sj(), self._hj(), self._kl(), self._fach()
+        kl_name = self._parse_kl_name(kl) if kl else None
+        if not sj or not kl_name or not fach: return
+        uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
+        for i, ul in enumerate(uls):
+            max_p = sum(ul["max_punkte_pro_aufgabe"]); anzahl = len(ul["max_punkte_pro_aufgabe"])
+            self.ul_lb.insert(tk.END, f"{ul['name']} (max {max_p} P., {anzahl} Aufg.)")
+        if keep_selection is not None and keep_selection < len(uls):
+            self.ul_lb.selection_set(keep_selection); self.ul_lb.see(keep_selection)
+        for item in self.ul_tree.get_children(): self.ul_tree.delete(item)
+        if uls:
+            sel = self.ul_lb.curselection()
+            if sel:
+                ulidx = sel[0]; ul = uls[ulidx]; max_p = ul["max_punkte_pro_aufgabe"]
+                cols = ["schuelerin"] + [f"a{i}" for i in range(len(max_p))] + ["gesamt", "prozent", "note"]
+                self.ul_tree["columns"] = cols; self.ul_tree.heading("schuelerin", text="Schülerin"); self.ul_tree.column("schuelerin", width=150)
+                for i, mp in enumerate(max_p):
+                    self.ul_tree.heading(f"a{i}", text=f"A{i+1} (/{mp})"); self.ul_tree.column(f"a{i}", width=60, anchor="center")
+                self.ul_tree.heading("gesamt", text="Gesamt"); self.ul_tree.column("gesamt", width=60, anchor="center")
+                self.ul_tree.heading("prozent", text="%"); self.ul_tree.column("prozent", width=55, anchor="center")
+                self.ul_tree.heading("note", text="Note"); self.ul_tree.column("note", width=55, anchor="center")
+                csv_str = self.daten.get_ns_csv(sj, kl_name); ges_max = sum(max_p)
+                for sk in self.daten.schuelerin_sortiert(sj, kl_name):
+                    d = self.daten._get_schueler_dict(sj, kl_name)[sk]; vals = [f"{d['nachname']}, {d['vorname']}"]
+                    ergebnis = ul["ergebnisse"].get(sk, [])
+                    for i in range(len(max_p)):
+                        vals.append(str(ergebnis[i]) if i < len(ergebnis) and ergebnis[i] is not None else "-")
+                    if ergebnis and all(p is not None for p in ergebnis):
+                        ges = sum(ergebnis); pct_raw = ges / ges_max * 100 if ges_max > 0 else 0
+                        pct = NotenVerwaltung._round_pct(pct_raw); note = NotenVerwaltung.ns_csv_lookup(pct, csv_str)
+                        vals.append(f"{ges}/{ges_max}"); vals.append(f"{pct}")
+                        n_str = f"{note:.0f}" if note is not None and float(note).is_integer() else (f"{note:.1f}" if note is not None else "-")
+                        vals.append(n_str)
+                    else: vals.extend(["-", "-", "-"])
+                    self.ul_tree.insert("", tk.END, values=vals)
+        else:
+            self.ul_tree["columns"] = ["info"]; self.ul_tree.heading("info", text="Keine Unterrichtsleistungen vorhanden"); self.ul_tree.column("info", width=400)
+
     def _refresh_gw_labels(self):
         gm = self.daten.gewichtung_muendlich; gs = 100 - gm
-        self.m_frame.config(text=f"Mündliche Noten ({gm}%)"); self.s_frame.config(text=f"Schriftliche Noten ({gs}%)")
-        self.gw_info.config(text=f"({gm}% mündlich + {gs}% schriftlich)")
+        self.m_frame.config(text=f"Unterrichtsleistung ({gm}%)"); self.s_frame.config(text=f"Schriftliche Noten ({gs}%)")
+        self.gw_info.config(text=f"({gm}% Unterrichtsleistung + {gs}% schriftlich)")
 
     # ---- Events ----
-    def _on_sj(self, e): self._refresh_kl(); self._refresh_fach(None); self._refresh_sk(None); self._refresh_noten(None, None); self._refresh_klausuren()
-    def _on_kl(self, e): self._refresh_fach(self._kl()); self._refresh_sk(self._kl()); self._refresh_noten(None, None); self._refresh_klausuren()
-    def _on_fach(self, e): self._refresh_noten(self._kl(), self._sk()); self._refresh_klausuren()
+    def _on_sj(self, e): self._refresh_kl(); self._refresh_fach(None); self._refresh_sk(None); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
+    def _on_kl(self, e): self._refresh_fach(self._kl()); self._refresh_sk(self._kl()); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
+    def _on_fach(self, e): self._refresh_noten(self._kl(), self._sk()); self._refresh_klausuren(); self._refresh_ul()
     def _on_sk(self, e): self._refresh_noten(self._kl(), self._sk())
     def _on_klausur_select(self, e):
         if not getattr(self, '_refreshing_klausuren', False): self._refresh_klausuren()
+    def _on_ul_select(self, e):
+        if not getattr(self, '_refreshing_ul', False): self._refresh_ul()
 
     def _on_gw(self):
         try: w = int(self.gw_var.get())
@@ -1258,7 +1418,7 @@ class NotenVerwaltungApp:
         if not sj or not kl: messagebox.showwarning("Warnung", "Bitte Schuljahr und Klasse auswählen!"); return
         kl_name = self._parse_kl_name(kl)
         if not messagebox.askyesno("Bestätigung", f"Klasse '{kl_name}' wirklich löschen?"): return
-        self.daten.klasse_loeschen(sj, kl_name); self._save(); self._refresh_kl(); self._refresh_fach(None); self._refresh_sk(None); self._refresh_noten(None, None); self._refresh_klausuren()
+        self.daten.klasse_loeschen(sj, kl_name); self._save(); self._refresh_kl(); self._refresh_fach(None); self._refresh_sk(None); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
 
     def _kl_uebertragen(self):
         sj, kl = self._sj(), self._kl()
@@ -1330,7 +1490,7 @@ class NotenVerwaltungApp:
         kl_name = self._parse_kl_name(kl); fach = self._fach()
         if not fach: messagebox.showwarning("Warnung", "Bitte ein Fach auswählen!"); return
         if not messagebox.askyesno("Bestätigung", f"Fach '{fach}' wirklich löschen?\nAlle Noten und Klausuren gehen verloren!"): return
-        self.daten.fach_loeschen(sj, kl_name, fach); self._save(); self._refresh_fach(kl); self._refresh_noten(None, None); self._refresh_klausuren()
+        self.daten.fach_loeschen(sj, kl_name, fach); self._save(); self._refresh_fach(kl); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
 
     # ---- CRUD Noten ----
     def _note_add(self, typ):
@@ -1353,11 +1513,12 @@ class NotenVerwaltungApp:
         s = lb.curselection()
         if not s: messagebox.showwarning("Warnung", "Bitte eine Note zum Löschen auswählen!"); return
         item_text = lb.get(s[0])
+        if item_text.strip().startswith("UL:"): messagebox.showinfo("Hinweis", "Bewertete Unterrichtsleistungen können nur über den Tab 'Unterrichtsleistungen' gelöscht werden."); return
         if item_text.strip().startswith("K:"): messagebox.showinfo("Hinweis", "Klausurnoten können nur über den Tab 'Klausuren' gelöscht werden."); return
         if not messagebox.askyesno("Bestätigung", "Diese Note wirklich löschen?"): return
         manual_count = 0
         for i in range(s[0]):
-            if not lb.get(i).strip().startswith("K:"): manual_count += 1
+            if not lb.get(i).strip().startswith(("K:", "UL:")): manual_count += 1
         self.daten.note_loeschen(sj, kl_name, fach, sk, hj, typ, manual_count); self._save(); self._refresh_noten(kl, sk)
 
     # ---- CRUD Klausuren ----
@@ -1365,7 +1526,7 @@ class NotenVerwaltungApp:
         sj, hj, kl = self._sj(), self._hj(), self._kl(); fach = self._fach()
         if not sj or not kl or not fach: messagebox.showwarning("Warnung", "Bitte Schuljahr, Klasse und Fach auswählen!"); return
         kl_name = self._parse_kl_name(kl)
-        dlg = KlausurDialog(self.root)
+        dlg = KlausurDialog(self.root, title="Klausur hinzufügen")
         if dlg.result is None: return
         name, max_p = dlg.result
         if not self.daten.klausur_hinzufuegen(sj, kl_name, fach, hj, name, max_p):
@@ -1397,8 +1558,8 @@ class NotenVerwaltungApp:
             schuelerinnen.append((sk, d["nachname"], d["vorname"]))
         if not schuelerinnen: messagebox.showinfo("Hinweis", "Keine Schülerinnen in dieser Klasse!"); return
         csv_str = self.daten.get_ns_csv(sj, kl_name)
-        dlg = KlausurPunkteDialog(self.root, klausur["name"], klausur["max_punkte_pro_aufgabe"],
-                                  schuelerinnen, klausur["ergebnisse"], csv_str)
+        dlg = PunkteDialog(self.root, "Punkte bearbeiten: Klausur", klausur["name"],
+                           klausur["max_punkte_pro_aufgabe"], schuelerinnen, klausur["ergebnisse"], csv_str)
         if dlg.result is None: return
         saved = 0
         for sk, punkte in dlg.result.items():
@@ -1418,7 +1579,54 @@ class NotenVerwaltungApp:
         csv_str, transfer = dlg.result
         self.daten.set_ns_csv(sj, kl_name, csv_str)
         for s, k in transfer: self.daten.set_ns_csv(s, k, csv_str)
-        self._save(); self._refresh_klausuren(); self._refresh_noten(self._kl(), self._sk())
+        self._save(); self._refresh_klausuren(); self._refresh_ul(); self._refresh_noten(self._kl(), self._sk())
+
+    # ---- CRUD Unterrichtsleistungen ----
+    def _ul_add(self):
+        sj, hj, kl = self._sj(), self._hj(), self._kl(); fach = self._fach()
+        if not sj or not kl or not fach: messagebox.showwarning("Warnung", "Bitte Schuljahr, Klasse und Fach auswählen!"); return
+        kl_name = self._parse_kl_name(kl)
+        dlg = KlausurDialog(self.root, title="Unterrichtsleistung hinzufügen")
+        if dlg.result is None: return
+        name, max_p = dlg.result
+        if not self.daten.ul_hinzufuegen(sj, kl_name, fach, hj, name, max_p):
+            messagebox.showwarning("Warnung", f"Unterrichtsleistung '{name}' existiert bereits!"); return
+        self._save(); uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
+        self._refresh_ul(keep_selection=len(uls) - 1 if uls else None)
+        self._refresh_noten(self._kl(), self._sk())
+
+    def _ul_del(self):
+        sj, hj, kl = self._sj(), self._hj(), self._kl(); fach = self._fach()
+        if not sj or not kl or not fach: messagebox.showwarning("Warnung", "Bitte Schuljahr, Klasse und Fach auswählen!"); return
+        kl_name = self._parse_kl_name(kl)
+        sel = self.ul_lb.curselection()
+        if not sel: messagebox.showwarning("Warnung", "Bitte eine Unterrichtsleistung auswählen!"); return
+        ulidx = sel[0]; ul = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)[ulidx]
+        if not messagebox.askyesno("Bestätigung", f"Unterrichtsleistung '{ul['name']}' wirklich löschen?"): return
+        self.daten.ul_loeschen(sj, kl_name, fach, hj, ulidx); self._save(); self._refresh_ul(); self._refresh_noten(self._kl(), self._sk())
+
+    def _ul_punkte(self):
+        sj, hj, kl = self._sj(), self._hj(), self._kl(); fach = self._fach()
+        if not sj or not kl or not fach: messagebox.showwarning("Warnung", "Bitte Schuljahr, Klasse und Fach auswählen!"); return
+        kl_name = self._parse_kl_name(kl)
+        sel = self.ul_lb.curselection()
+        if not sel: messagebox.showwarning("Warnung", "Bitte eine Unterrichtsleistung auswählen!"); return
+        ulidx = sel[0]; ul = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)[ulidx]
+        schuelerinnen = []
+        for sk in self.daten.schuelerin_sortiert(sj, kl_name):
+            d = self.daten._get_schueler_dict(sj, kl_name)[sk]
+            schuelerinnen.append((sk, d["nachname"], d["vorname"]))
+        if not schuelerinnen: messagebox.showinfo("Hinweis", "Keine Schülerinnen in dieser Klasse!"); return
+        csv_str = self.daten.get_ns_csv(sj, kl_name)
+        dlg = PunkteDialog(self.root, "Punkte bearbeiten: Unterrichtsleistung", ul["name"],
+                           ul["max_punkte_pro_aufgabe"], schuelerinnen, ul["ergebnisse"], csv_str)
+        if dlg.result is None: return
+        saved = 0
+        for sk, punkte in dlg.result.items():
+            if self.daten.ul_punkte_setzen(sj, kl_name, fach, hj, ulidx, sk, punkte): saved += 1
+            else: logging.warning(f"Punkte für {sk} konnten nicht gespeichert werden")
+        if saved == 0 and dlg.result: messagebox.showwarning("Fehler", "Punkte konnten nicht gespeichert werden!", parent=self.root)
+        self._save(); self._refresh_ul(); self._refresh_noten(self._kl(), self._sk())
 
 
 # ---------------------------------------------------------------------------
@@ -1432,9 +1640,9 @@ def _migrate_old_md():
     with open(md_file, "r", encoding="utf-8") as f:
         for z in f:
             z = z.strip()
-            if z.startswith("Gewichtung Mündlich:"):
+            if z.startswith("Gewichtung Unterrichtsleistung:") or z.startswith("Gewichtung Mündlich:"):
                 try:
-                    w = int(z.replace("Gewichtung Mündlich:", "").replace("%", "").strip())
+                    w = int(z.split(":")[1].replace("%", "").strip())
                     if 0 <= w <= 100: old_data.gewichtung_muendlich = w
                 except ValueError: pass
             elif z.startswith("## Schuljahr "):
@@ -1450,17 +1658,24 @@ def _migrate_old_md():
                 cur_hj = None
             elif z.startswith("##### ") and cur_sk:
                 cur_hj = z[6:].strip()
-            elif z.startswith("- Mündlich:") and cur_sk and cur_hj:
-                ns = z[12:].strip()
+            elif z.startswith("- Unterrichtsleistung (manuell):") and cur_sk and cur_hj:
+                ns = z.split(":", 1)[1].strip()
                 if ns:
-                    fach = old_data.schuljahre[cur_sj][cur_kl]["faecher"].setdefault("Allgemein", {"halbjahre": {}, "klausuren": {}})
+                    fach = old_data.schuljahre[cur_sj][cur_kl]["faecher"].setdefault("Allgemein", {"halbjahre": {}, "klausuren": {}, "unterrichtsleistungen": {}})
+                    hj_data = fach["halbjahre"].setdefault(cur_hj, {"noten": {}})
+                    hj_data["noten"].setdefault(cur_sk, {"muendlich": [], "schriftlich": []})
+                    hj_data["noten"][cur_sk]["muendlich"] = [int(x.strip()) for x in ns.split(",") if x.strip()]
+            elif z.startswith("- Mündlich:") and cur_sk and cur_hj:
+                ns = z[11:].strip()
+                if ns:
+                    fach = old_data.schuljahre[cur_sj][cur_kl]["faecher"].setdefault("Allgemein", {"halbjahre": {}, "klausuren": {}, "unterrichtsleistungen": {}})
                     hj_data = fach["halbjahre"].setdefault(cur_hj, {"noten": {}})
                     hj_data["noten"].setdefault(cur_sk, {"muendlich": [], "schriftlich": []})
                     hj_data["noten"][cur_sk]["muendlich"] = [int(x.strip()) for x in ns.split(",") if x.strip()]
             elif z.startswith("- Schriftlich:") and cur_sk and cur_hj:
                 ns = z[14:].strip()
                 if ns:
-                    fach = old_data.schuljahre[cur_sj][cur_kl]["faecher"].setdefault("Allgemein", {"halbjahre": {}, "klausuren": {}})
+                    fach = old_data.schuljahre[cur_sj][cur_kl]["faecher"].setdefault("Allgemein", {"halbjahre": {}, "klausuren": {}, "unterrichtsleistungen": {}})
                     hj_data = fach["halbjahre"].setdefault(cur_hj, {"noten": {}})
                     hj_data["noten"].setdefault(cur_sk, {"muendlich": [], "schriftlich": []})
                     hj_data["noten"][cur_sk]["schriftlich"] = [int(x.strip()) for x in ns.split(",") if x.strip()]
