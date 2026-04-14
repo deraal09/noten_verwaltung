@@ -4,9 +4,10 @@ Notenverwaltung - Programm zur Verwaltung von Schülerinnennoten
 Daten werden verschlüsselt gespeichert (.ndat)
 Export als Markdown (.md) oder CSV möglich
 Notenschlüssel: BG (0-15) und IHK (1-6)
-Klausuren mit Punkte-System und Notenschlüssel-CSV
-Unterrichtsleistungen mit Punkte-System (fließen in Unterrichtsleistung ein)
+Klausuren/Unterrichtsleistungen mit Punkte-System, Notenschlüssel-CSV und prozentualer Gewichtung
 Fächer mit eigenen Noten und Klausuren pro Klasse
+Gewichtung: Jede Klausur/UL hat einen %-Anteil an der Gesamtnote,
+der aus dem Kategorie-Pool (UL%/Schriftlich%) kommt.
 """
 
 import tkinter as tk
@@ -99,6 +100,14 @@ class NotenVerwaltung:
 
     def get_notenbereich(self, sj, k):
         return NOTENSCHLUESSEL.get(self.get_notenschluessel(sj, k), (1, 6))
+
+    @property
+    def ul_prozent(self):
+        return self.gewichtung_muendlich
+
+    @property
+    def schriftlich_prozent(self):
+        return 100 - self.gewichtung_muendlich
 
     # ---- Notenschlüssel CSV ----
     @staticmethod
@@ -206,7 +215,6 @@ class NotenVerwaltung:
                 }
 
     def _parse_fach(self, fd):
-        """Parst ein Fach-Dict aus der JSON."""
         halbjahre = {}
         for hj, hj_data in fd.get("halbjahre", {}).items():
             noten = {}
@@ -225,6 +233,7 @@ class NotenVerwaltung:
                         "name": klausur.get("name", ""),
                         "max_punkte_pro_aufgabe": klausur.get("max_punkte_pro_aufgabe", []),
                         "ergebnisse": klausur.get("ergebnisse", {}),
+                        "gewichtung": klausur.get("gewichtung", 0),
                     })
             klausuren[hj] = fixed
         unterrichtsleistungen = {}
@@ -236,12 +245,12 @@ class NotenVerwaltung:
                         "name": ul.get("name", ""),
                         "max_punkte_pro_aufgabe": ul.get("max_punkte_pro_aufgabe", []),
                         "ergebnisse": ul.get("ergebnisse", {}),
+                        "gewichtung": ul.get("gewichtung", 0),
                     })
             unterrichtsleistungen[hj] = fixed
         return {"halbjahre": halbjahre, "klausuren": klausuren, "unterrichtsleistungen": unterrichtsleistungen}
 
     def _migrate_old_format(self, kl_data, schueler):
-        """Migriert altes Format (Noten in schuelerinnen, klausuren auf Klassenebene) zu Fächern."""
         fach = {"halbjahre": {}, "klausuren": {}, "unterrichtsleistungen": {}}
         for sk, d in (kl_data.get("schuelerinnen", kl_data) if isinstance(kl_data, dict) else {}).items():
             if not isinstance(d, dict): continue
@@ -261,6 +270,7 @@ class NotenVerwaltung:
                         "name": klausur.get("name", ""),
                         "max_punkte_pro_aufgabe": klausur.get("max_punkte_pro_aufgabe", []),
                         "ergebnisse": klausur.get("ergebnisse", {}),
+                        "gewichtung": klausur.get("gewichtung", 0),
                     })
             fach["klausuren"][hj] = fixed
         return {"Allgemein": fach}
@@ -283,7 +293,7 @@ class NotenVerwaltung:
 
     # ---- Export ----
     def export_markdown(self, filepath):
-        z = ["# Notenverwaltung", "", f"Gewichtung Unterrichtsleistung: {self.gewichtung_muendlich}%", ""]
+        z = ["# Notenverwaltung", "", f"Gewichtung Unterrichtsleistung: {self.ul_prozent}%", f"Gewichtung Schriftlich: {self.schriftlich_prozent}%", ""]
         for sj in sorted(self.schuljahre):
             z.append(f"## Schuljahr {sj}"); z.append("")
             for kn in sorted(self.schuljahre[sj]):
@@ -298,14 +308,16 @@ class NotenVerwaltung:
                             z.append(f"**Klausuren {hj}:**")
                             for kl in klausuren:
                                 max_p = sum(kl["max_punkte_pro_aufgabe"])
-                                z.append(f"- {kl['name']} (max. {max_p} Punkte)")
+                                gw = kl.get("gewichtung", 0)
+                                z.append(f"- {kl['name']} ({gw}% der Gesamtnote, max. {max_p} Punkte)")
                             z.append("")
                         uls = fach.get("unterrichtsleistungen", {}).get(hj, [])
                         if uls:
                             z.append(f"**Unterrichtsleistungen {hj}:**")
                             for ul in uls:
                                 max_p = sum(ul["max_punkte_pro_aufgabe"])
-                                z.append(f"- {ul['name']} (max. {max_p} Punkte)")
+                                gw = ul.get("gewichtung", 0)
+                                z.append(f"- {ul['name']} ({gw}% der Gesamtnote, max. {max_p} Punkte)")
                             z.append("")
                     for sk in self.schuelerin_sortiert(sj, kn):
                         d = self.schuljahre[sj][kn]["schuelerinnen"][sk]
@@ -313,18 +325,24 @@ class NotenVerwaltung:
                             noten = fach.get("halbjahre", {}).get(hj, {}).get("noten", {}).get(sk, {})
                             m = noten.get("muendlich", [])
                             s_manual = noten.get("schriftlich", [])
-                            kn_notes = self.get_klausur_noten(sj, kn, fn, sk, hj)
-                            ul_notes = self.get_ul_noten(sj, kn, fn, sk, hj)
+                            kn_notes = self.get_klausur_noten_gewichtet(sj, kn, fn, sk, hj)
+                            ul_notes = self.get_ul_noten_gewichtet(sj, kn, fn, sk, hj)
                             if m or s_manual or kn_notes or ul_notes:
+                                sum_kl_gw = sum(kl.get("gewichtung", 0) for kl in klausuren)
+                                sum_ul_gw = sum(ul.get("gewichtung", 0) for ul in uls)
+                                remaining_ul = max(0, self.ul_prozent - sum_ul_gw)
+                                remaining_schr = max(0, self.schriftlich_prozent - sum_kl_gw)
                                 z.append(f"**{d['nachname']}, {d['vorname']}** – {fn} – {hj}")
-                                z.append(f"- Unterrichtsleistung (manuell): {', '.join(str(n) for n in m)}")
+                                if m:
+                                    z.append(f"- Unterrichtsleistung manuell ({remaining_ul}%): {', '.join(str(n) for n in m)}")
                                 if ul_notes:
-                                    z.append(f"- Unterrichtsleistung (bewertet): {', '.join(str(n) for n in ul_notes)}")
+                                    z.append(f"- Unterrichtsleistung bewertet: {', '.join(f'{n} ({g}%)' for n, g in ul_notes)}")
+                                if s_manual:
+                                    z.append(f"- Schriftlich manuell ({remaining_schr}%): {', '.join(str(n) for n in s_manual)}")
                                 if kn_notes:
-                                    z.append(f"- Schriftlich (manuell): {', '.join(str(n) for n in s_manual)}")
-                                    z.append(f"- Schriftlich (Klausuren): {', '.join(str(n) for n in kn_notes)}")
-                                else:
-                                    z.append(f"- Schriftlich: {', '.join(str(n) for n in s_manual)}")
+                                    z.append(f"- Schriftlich Klausuren: {', '.join(f'{n} ({g}%)' for n, g in kn_notes)}")
+                                gn = self.gesamtnote_hj(sj, kn, fn, sk, hj)
+                                if gn is not None: z.append(f"- **Gesamtnote: {gn:.2f}**")
                                 z.append("")
                     z.append("")
                 z.append("")
@@ -335,9 +353,8 @@ class NotenVerwaltung:
         with open(filepath, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f, delimiter=";")
             w.writerow(["Schuljahr", "Klasse", "Fach", "Notenschlüssel", "Nachname", "Vorname", "Halbjahr",
-                         "Unterrichtsleistung (manuell)", "Unterrichtsleistung (bewertet)",
-                         "Schriftl. Noten (manuell)", "Schriftl. Noten (Klausuren)",
-                         "Durchschnitt Unterrichtsleistung", "Durchschnitt Schriftlich", "Gesamtnote Halbjahr"])
+                         "UL manuell", "UL bewertet", "Schriftlich manuell", "Schriftlich Klausuren",
+                         "Gesamtnote Halbjahr"])
             for sj in sorted(self.schuljahre):
                 for kn in sorted(self.schuljahre[sj]):
                     ns = self.get_notenschluessel(sj, kn)
@@ -345,17 +362,13 @@ class NotenVerwaltung:
                         for sk in self.schuelerin_sortiert(sj, kn):
                             d = self.schuljahre[sj][kn]["schuelerinnen"][sk]
                             for hj in HALBJAHRE:
-                                dm = self.durchschnitt(self.get_ul_all(sj, kn, fn, sk, hj))
-                                all_schr = self.get_schriftlich_all(sj, kn, fn, sk, hj)
-                                ds = self.durchschnitt(all_schr)
-                                gh = self.gesamtnote_hj(sj, kn, fn, sk, hj)
+                                gn = self.gesamtnote_hj(sj, kn, fn, sk, hj)
                                 w.writerow([sj, kn, fn, ns, d["nachname"], d["vorname"], hj,
                                     " | ".join(str(n) for n in self._get_muendlich(sj, kn, fn, sk, hj)),
-                                    " | ".join(str(n) for n in self.get_ul_noten(sj, kn, fn, sk, hj)),
+                                    " | ".join(f"{n}({g}%)" for n, g in self.get_ul_noten_gewichtet(sj, kn, fn, sk, hj)),
                                     " | ".join(str(n) for n in self._get_schriftlich(sj, kn, fn, sk, hj)),
-                                    " | ".join(str(n) for n in self.get_klausur_noten(sj, kn, fn, sk, hj)),
-                                    f"{dm:.2f}" if dm else "-", f"{ds:.2f}" if ds else "-",
-                                    f"{gh:.2f}" if gh else "-"])
+                                    " | ".join(f"{n}({g}%)" for n, g in self.get_klausur_noten_gewichtet(sj, kn, fn, sk, hj)),
+                                    f"{gn:.2f}" if gn else "-"])
 
     # ---- CRUD Schuljahr / Klasse / Schülerin ----
     def schuljahr_hinzufuegen(self, s):
@@ -478,22 +491,65 @@ class NotenVerwaltung:
             if 0 <= idx < len(n): n.pop(idx); return True
         return False
 
+    # ---- Gewichtung-Verteilung ----
+    def _auto_distribute_klausuren(self, sj, k, fach, hj):
+        """Verteilt Schriftlich%-Anteil gleichmäßig auf alle Klausuren."""
+        klausuren = self.get_klausuren(sj, k, fach, hj)
+        if not klausuren: return
+        each = self.schriftlich_prozent / len(klausuren)
+        for kl in klausuren:
+            kl["gewichtung"] = round(each, 1)
+        # Rundungskorrektur beim letzten
+        total = sum(kl["gewichtung"] for kl in klausuren)
+        diff = self.schriftlich_prozent - total
+        if diff != 0 and klausuren:
+            klausuren[-1]["gewichtung"] = round(klausuren[-1]["gewichtung"] + diff, 1)
+
+    def _auto_distribute_ul(self, sj, k, fach, hj):
+        """Verteilt UL%-Anteil gleichmäßig auf alle Unterrichtsleistungen."""
+        uls = self.get_unterrichtsleistungen(sj, k, fach, hj)
+        if not uls: return
+        each = self.ul_prozent / len(uls)
+        for ul in uls:
+            ul["gewichtung"] = round(each, 1)
+        total = sum(ul["gewichtung"] for ul in uls)
+        diff = self.ul_prozent - total
+        if diff != 0 and uls:
+            uls[-1]["gewichtung"] = round(uls[-1]["gewichtung"] + diff, 1)
+
+    def get_remaining_ul_pct(self, sj, k, fach, hj):
+        """Verbleibender %-Anteil für manuelle UL-Noten."""
+        uls = self.get_unterrichtsleistungen(sj, k, fach, hj)
+        used = sum(ul.get("gewichtung", 0) for ul in uls)
+        return max(0, self.ul_prozent - used)
+
+    def get_remaining_schriftlich_pct(self, sj, k, fach, hj):
+        """Verbleibender %-Anteil für manuelle schriftliche Noten."""
+        klausuren = self.get_klausuren(sj, k, fach, hj)
+        used = sum(kl.get("gewichtung", 0) for kl in klausuren)
+        return max(0, self.schriftlich_prozent - used)
+
     # ---- CRUD Klausuren (pro Fach) ----
-    def klausur_hinzufuegen(self, sj, k, fach, hj, name, max_punkte_pro_aufgabe):
+    def klausur_hinzufuegen(self, sj, k, fach, hj, name, max_punkte_pro_aufgabe, gewichtung=None):
         f = self._get_fach(sj, k, fach)
         if f is None: return False
         if "klausuren" not in f: f["klausuren"] = {}
         if hj not in f["klausuren"]: f["klausuren"][hj] = []
         for klausur in f["klausuren"][hj]:
             if klausur["name"] == name: return False
-        f["klausuren"][hj].append({"name": name, "max_punkte_pro_aufgabe": max_punkte_pro_aufgabe, "ergebnisse": {}})
+        f["klausuren"][hj].append({"name": name, "max_punkte_pro_aufgabe": max_punkte_pro_aufgabe, "ergebnisse": {}, "gewichtung": 0})
+        # Auto-verteilen
+        self._auto_distribute_klausuren(sj, k, fach, hj)
         return True
 
     def klausur_loeschen(self, sj, k, fach, hj, idx):
         f = self._get_fach(sj, k, fach)
         if f is None: return False
         klist = f.get("klausuren", {}).get(hj, [])
-        if 0 <= idx < len(klist): klist.pop(idx); return True
+        if 0 <= idx < len(klist):
+            klist.pop(idx)
+            self._auto_distribute_klausuren(sj, k, fach, hj)
+            return True
         return False
 
     def get_klausuren(self, sj, k, fach, hj):
@@ -511,6 +567,15 @@ class NotenVerwaltung:
         for i, p in enumerate(punkte):
             if p is not None and (p < 0 or p > klausur["max_punkte_pro_aufgabe"][i]): return False
         klausur["ergebnisse"][sk] = punkte
+        return True
+
+    def klausur_gewichtung_setzen(self, sj, k, fach, hj, kidx, gewichtung):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return False
+        klist = f.get("klausuren", {}).get(hj, [])
+        if not (0 <= kidx < len(klist)): return False
+        if gewichtung < 0: return False
+        klist[kidx]["gewichtung"] = gewichtung
         return True
 
     @staticmethod
@@ -531,34 +596,36 @@ class NotenVerwaltung:
         prozent = self._round_pct(sum(punkte) / max_p * 100)
         return self.ns_csv_lookup(prozent, self.get_ns_csv(sj, k))
 
-    def get_klausur_noten(self, sj, k, fach, sk, hj):
+    def get_klausur_noten_gewichtet(self, sj, k, fach, sk, hj):
+        """Returns list of (note, gewichtung_pct) tuples."""
         klausuren = self.get_klausuren(sj, k, fach, hj)
-        noten = []
+        result = []
         for i in range(len(klausuren)):
             note = self.klausur_note_berechnen(sj, k, fach, hj, i, sk)
-            if note is not None: noten.append(note)
-        return noten
-
-    def get_schriftlich_all(self, sj, k, fach, sk, hj):
-        manual = self._get_schriftlich(sj, k, fach, sk, hj)
-        return manual + self.get_klausur_noten(sj, k, fach, sk, hj)
+            if note is not None:
+                result.append((note, klausuren[i].get("gewichtung", 0)))
+        return result
 
     # ---- CRUD Unterrichtsleistungen (pro Fach) ----
-    def ul_hinzufuegen(self, sj, k, fach, hj, name, max_punkte_pro_aufgabe):
+    def ul_hinzufuegen(self, sj, k, fach, hj, name, max_punkte_pro_aufgabe, gewichtung=None):
         f = self._get_fach(sj, k, fach)
         if f is None: return False
         if "unterrichtsleistungen" not in f: f["unterrichtsleistungen"] = {}
         if hj not in f["unterrichtsleistungen"]: f["unterrichtsleistungen"][hj] = []
         for ul in f["unterrichtsleistungen"][hj]:
             if ul["name"] == name: return False
-        f["unterrichtsleistungen"][hj].append({"name": name, "max_punkte_pro_aufgabe": max_punkte_pro_aufgabe, "ergebnisse": {}})
+        f["unterrichtsleistungen"][hj].append({"name": name, "max_punkte_pro_aufgabe": max_punkte_pro_aufgabe, "ergebnisse": {}, "gewichtung": 0})
+        self._auto_distribute_ul(sj, k, fach, hj)
         return True
 
     def ul_loeschen(self, sj, k, fach, hj, idx):
         f = self._get_fach(sj, k, fach)
         if f is None: return False
         ulist = f.get("unterrichtsleistungen", {}).get(hj, [])
-        if 0 <= idx < len(ulist): ulist.pop(idx); return True
+        if 0 <= idx < len(ulist):
+            ulist.pop(idx)
+            self._auto_distribute_ul(sj, k, fach, hj)
+            return True
         return False
 
     def get_unterrichtsleistungen(self, sj, k, fach, hj):
@@ -578,6 +645,15 @@ class NotenVerwaltung:
         ul["ergebnisse"][sk] = punkte
         return True
 
+    def ul_gewichtung_setzen(self, sj, k, fach, hj, ulidx, gewichtung):
+        f = self._get_fach(sj, k, fach)
+        if f is None: return False
+        ulist = f.get("unterrichtsleistungen", {}).get(hj, [])
+        if not (0 <= ulidx < len(ulist)): return False
+        if gewichtung < 0: return False
+        ulist[ulidx]["gewichtung"] = gewichtung
+        return True
+
     def ul_note_berechnen(self, sj, k, fach, hj, ulidx, sk):
         f = self._get_fach(sj, k, fach)
         if f is None: return None
@@ -592,42 +668,70 @@ class NotenVerwaltung:
         prozent = self._round_pct(sum(punkte) / max_p * 100)
         return self.ns_csv_lookup(prozent, self.get_ns_csv(sj, k))
 
-    def get_ul_noten(self, sj, k, fach, sk, hj):
+    def get_ul_noten_gewichtet(self, sj, k, fach, sk, hj):
+        """Returns list of (note, gewichtung_pct) tuples."""
         uls = self.get_unterrichtsleistungen(sj, k, fach, hj)
-        noten = []
+        result = []
         for i in range(len(uls)):
             note = self.ul_note_berechnen(sj, k, fach, hj, i, sk)
-            if note is not None: noten.append(note)
-        return noten
-
-    def get_ul_all(self, sj, k, fach, sk, hj):
-        """Alle Unterrichtsleistungs-Noten: manuell + bewertete UL."""
-        manual = self._get_muendlich(sj, k, fach, sk, hj)
-        return manual + self.get_ul_noten(sj, k, fach, sk, hj)
+            if note is not None:
+                result.append((note, uls[i].get("gewichtung", 0)))
+        return result
 
     # ---- Berechnungen ----
     @staticmethod
     def durchschnitt(noten):
         return round(sum(noten) / len(noten), 2) if noten else None
 
-    def _gf(self): return self.gewichtung_muendlich / 100, (100 - self.gewichtung_muendlich) / 100
-
-    def _gesamt(self, sm, ss):
-        fm, fs = self._gf()
-        if sm is not None and ss is not None: return round(sm * fm + ss * fs, 2)
-        return sm if sm is not None else ss
-
     def gesamtnote_hj(self, sj, k, fach, sk, hj):
-        ul_all = self.get_ul_all(sj, k, fach, sk, hj)
-        schriftlich = self.get_schriftlich_all(sj, k, fach, sk, hj)
-        return self._gesamt(self.durchschnitt(ul_all), self.durchschnitt(schriftlich))
+        """Berechnet die Gesamtnote basierend auf prozentualer Gewichtung."""
+        total = 0
+        has_any = False
+
+        # Bewertete ULs
+        uls = self.get_unterrichtsleistungen(sj, k, fach, hj)
+        for i, ul in enumerate(uls):
+            note = self.ul_note_berechnen(sj, k, fach, hj, i, sk)
+            gw = ul.get("gewichtung", 0)
+            if note is not None and gw > 0:
+                total += note * (gw / 100)
+                has_any = True
+
+        # Manuelle UL-Noten
+        manual_ul = self._get_muendlich(sj, k, fach, sk, hj)
+        remaining_ul = self.get_remaining_ul_pct(sj, k, fach, hj)
+        if manual_ul and remaining_ul > 0:
+            avg = sum(manual_ul) / len(manual_ul)
+            total += avg * (remaining_ul / 100)
+            has_any = True
+
+        # Bewertete Klausuren
+        klausuren = self.get_klausuren(sj, k, fach, hj)
+        for i, kl in enumerate(klausuren):
+            note = self.klausur_note_berechnen(sj, k, fach, hj, i, sk)
+            gw = kl.get("gewichtung", 0)
+            if note is not None and gw > 0:
+                total += note * (gw / 100)
+                has_any = True
+
+        # Manuelle schriftliche Noten
+        manual_schr = self._get_schriftlich(sj, k, fach, sk, hj)
+        remaining_schr = self.get_remaining_schriftlich_pct(sj, k, fach, hj)
+        if manual_schr and remaining_schr > 0:
+            avg = sum(manual_schr) / len(manual_schr)
+            total += avg * (remaining_schr / 100)
+            has_any = True
+
+        return round(total, 2) if has_any else None
 
     def gesamtnote_jahr(self, sj, k, fach, sk):
-        gm, gs = [], []
-        for h in HALBJAHRE:
-            gm.extend(self.get_ul_all(sj, k, fach, sk, h))
-            gs.extend(self.get_schriftlich_all(sj, k, fach, sk, h))
-        return self._gesamt(self.durchschnitt(gm), self.durchschnitt(gs))
+        """Jahresnote: Durchschnitt der Halbjahresnoten."""
+        notes = []
+        for hj in HALBJAHRE:
+            gn = self.gesamtnote_hj(sj, k, fach, sk, hj)
+            if gn is not None:
+                notes.append(gn)
+        return round(sum(notes) / len(notes), 2) if notes else None
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +847,6 @@ class SchuelerlisteDialog(_CenteredToplevel):
         ttk.Label(f, text="Schülerinnen:").pack(anchor="w")
         self.text = tk.Text(f, height=15, width=50, font=("Courier", 10))
         self.text.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
-        self.text.insert("1.0", "")
         ttk.Label(f, text="Tipp: Liste kann aus Excel/CSV kopiert werden", foreground="gray", font=("TkDefaultFont", 8)).pack(anchor="w")
         bf = ttk.Frame(f); bf.pack(fill=tk.X, pady=(15, 0))
         ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.RIGHT, padx=5)
@@ -778,10 +881,10 @@ class KlausurDialog(_CenteredToplevel):
         ttk.Label(f, text="Anzahl Aufgaben:").grid(row=1, column=0, sticky="w", pady=(0, 5))
         self.e_anz = ttk.Spinbox(f, from_=1, to=20, width=5); self.e_anz.grid(row=1, column=1, sticky="w", pady=(0, 5), padx=(5, 0)); self.e_anz.set(3)
         ttk.Label(f, text="Max. Punkte pro Aufgabe\n(kommagetrennt):", foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 2))
-        self.e_punkte = ttk.Entry(f, width=25); self.e_punkte.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10)); self.e_punkte.insert(0, "10,10,10")
+        self.e_punkte = ttk.Entry(f, width=25); self.e_punkte.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 5)); self.e_punkte.insert(0, "10,10,10")
         self.e_anz.bind("<Return>", lambda e: self.e_punkte.focus_set())
         self.e_punkte.bind("<Return>", lambda e: self._ok())
-        bf = ttk.Frame(f); bf.grid(row=4, column=0, columnspan=2)
+        bf = ttk.Frame(f); bf.grid(row=5, column=0, columnspan=2)
         ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Button(bf, text="Abbrechen", command=self._cancel, width=10).pack(side=tk.LEFT, padx=5)
         self._center(); self.protocol("WM_DELETE_WINDOW", self._cancel); self.wait_window()
@@ -795,6 +898,32 @@ class KlausurDialog(_CenteredToplevel):
         if len(max_p) != anz: messagebox.showwarning("Warnung", f"Anzahl der Punkte-Einträge ({len(max_p)}) stimmt nicht mit Aufgabenanzahl ({anz}) überein!", parent=self); return
         if any(p <= 0 for p in max_p): messagebox.showwarning("Warnung", "Punkte müssen > 0 sein!", parent=self); return
         self.result = (name, max_p); self.destroy()
+    def _cancel(self): self.result = None; self.destroy()
+
+
+class GewichtungDialog(_CenteredToplevel):
+    """Dialog zum Ändern der prozentualen Gewichtung einer Klausur/UL."""
+    def __init__(self, parent, title, name, current_gewichtung, category_total, remaining_for_manual):
+        super().__init__(parent); self.title(title); self.resizable(False, False)
+        self.result = None; self.transient(parent); self.grab_set()
+        f = ttk.Frame(self, padding=15); f.pack()
+        ttk.Label(f, text=f"Gewichtung für '{name}':", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, columnspan=2, pady=(0, 10))
+        ttk.Label(f, text="Anteil an Gesamtnote (%):").grid(row=1, column=0, sticky="w", pady=(0, 5))
+        self.e_gw = ttk.Spinbox(f, from_=0, to=100, width=6, increment=5); self.e_gw.grid(row=1, column=1, sticky="w", pady=(0, 5), padx=(5, 0))
+        self.e_gw.set(current_gewichtung)
+        info = f"Kategorie-Gesamt: {category_total}%\nVerbleibend für manuelle Noten: {remaining_for_manual:.1f}%"
+        ttk.Label(f, text=info, foreground="gray").grid(row=2, column=0, columnspan=2, pady=(5, 5))
+        bf = ttk.Frame(f); bf.grid(row=3, column=0, columnspan=2)
+        ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(bf, text="Abbrechen", command=self._cancel, width=10).pack(side=tk.LEFT, padx=5)
+        self.e_gw.bind("<Return>", lambda e: self._ok())
+        self.e_gw.focus_set()
+        self._center(); self.protocol("WM_DELETE_WINDOW", self._cancel); self.wait_window()
+    def _ok(self):
+        try: gewichtung = float(self.e_gw.get())
+        except ValueError: messagebox.showwarning("Warnung", "Ungültige Gewichtung!", parent=self); return
+        if gewichtung < 0: messagebox.showwarning("Warnung", "Gewichtung muss ≥ 0 sein!", parent=self); return
+        self.result = gewichtung; self.destroy()
     def _cancel(self): self.result = None; self.destroy()
 
 
@@ -1010,7 +1139,6 @@ class NotenVerwaltungApp:
         sty.configure("J.TLabel", font=("TkDefaultFont", 11, "bold"), foreground="#2a5da8")
         sty.configure("I.TLabel", font=("TkDefaultFont", 9), foreground="gray")
         sty.configure("NS.TLabel", font=("TkDefaultFont", 9, "bold"), foreground="#c44")
-        # Menü
         menubar = tk.Menu(self.root); self.root.config(menu=menubar)
         fm = tk.Menu(menubar, tearoff=0); menubar.add_cascade(label="Datei", menu=fm)
         fm.add_command(label="Öffnen...", command=self._file_open, accelerator="Strg+O")
@@ -1023,7 +1151,6 @@ class NotenVerwaltungApp:
         fm.add_separator()
         fm.add_command(label="Beenden", command=self.root.quit)
         hf = ttk.Frame(self.root, padding=10); hf.pack(fill=tk.BOTH, expand=True)
-        # Oben: Einstellungen
         top = ttk.LabelFrame(hf, text="Einstellungen", padding=5)
         top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 5))
         ttk.Label(top, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
@@ -1043,14 +1170,13 @@ class NotenVerwaltungApp:
         ttk.Button(top, text="+", width=3, command=self._fach_add).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(top, text="−", width=3, command=self._fach_del).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(top, text="Gewichtung Unterrichtsleistung:").pack(side=tk.LEFT, padx=(5, 3))
+        ttk.Label(top, text="Gewichtung UL:").pack(side=tk.LEFT, padx=(5, 3))
         self.gw_var = tk.StringVar(value=str(gm))
         self.gw_sb = ttk.Spinbox(top, from_=0, to=100, width=4, textvariable=self.gw_var, command=self._on_gw)
         self.gw_sb.pack(side=tk.LEFT, padx=(0, 2))
         ttk.Label(top, text="%  /  Schriftlich:").pack(side=tk.LEFT)
         self.gw_sl = ttk.Label(top, text=f"{gs}%"); self.gw_sl.pack(side=tk.LEFT, padx=(0, 5))
         self.gw_sb.bind("<Return>", lambda e: self._on_gw()); self.gw_sb.bind("<FocusOut>", lambda e: self._on_gw())
-        # Links: Klassen
         kf = ttk.LabelFrame(hf, text="Klassen", padding=5); kf.grid(row=1, column=0, sticky="nsew", padx=(0, 3))
         self.kl_lb = tk.Listbox(kf, height=18, width=20, exportselection=False)
         self.kl_lb.pack(fill=tk.BOTH, expand=True); self.kl_lb.bind("<<ListboxSelect>>", self._on_kl)
@@ -1058,7 +1184,6 @@ class NotenVerwaltungApp:
         ttk.Button(bf, text="Hinzufügen", command=self._kl_add).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         ttk.Button(bf, text="Übertragen", command=self._kl_uebertragen).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(bf, text="Löschen", command=self._kl_del).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
-        # Mitte: Schülerinnen
         sf = ttk.LabelFrame(hf, text="Schülerinnen", padding=5); sf.grid(row=1, column=1, sticky="nsew", padx=3)
         self.sk_lb = tk.Listbox(sf, height=18, width=24, exportselection=False)
         self.sk_lb.pack(fill=tk.BOTH, expand=True); self.sk_lb.bind("<<ListboxSelect>>", self._on_sk)
@@ -1066,18 +1191,15 @@ class NotenVerwaltungApp:
         ttk.Button(bf2, text="Hinzufügen", command=self._sk_add).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         ttk.Button(bf2, text="Liste", command=self._sk_list_add).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(bf2, text="Löschen", command=self._sk_del).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
-        # Rechts: Notebook
         self.nb = ttk.Notebook(hf); self.nb.grid(row=1, column=2, sticky="nsew", padx=(3, 0))
-        self._build_noten_tab(gm, gs); self._build_klausuren_tab(); self._build_ul_tab()
+        self._build_noten_tab(gm, gs); self._build_ul_tab(); self._build_klausuren_tab()
         hf.columnconfigure(0, weight=1); hf.columnconfigure(1, weight=2); hf.columnconfigure(2, weight=4)
         hf.rowconfigure(1, weight=1)
-        # Tastenkürzel
         self.root.bind("<Control-o>", lambda e: self._file_open())
         self.root.bind("<Control-O>", lambda e: self._file_open())
         self.root.bind("<Control-Shift-s>", lambda e: self._file_save_as())
         self.root.bind("<Control-Shift-S>", lambda e: self._file_save_as())
 
-    # ---- Noten-Tab ----
     def _build_noten_tab(self, gm, gs):
         nf = ttk.Frame(self.nb, padding=5); self.nb.add(nf, text="  Noten  ")
         self.info_lbl = ttk.Label(nf, text="Bitte eine Schülerin auswählen", style="H.TLabel")
@@ -1090,8 +1212,7 @@ class NotenVerwaltungApp:
         self.m_sp = ttk.Spinbox(mbf, from_=1, to=6, width=5); self.m_sp.pack(side=tk.LEFT, padx=(0, 5)); self.m_sp.set(1)
         ttk.Button(mbf, text="Note eintragen", command=lambda: self._note_add("muendlich")).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(mbf, text="Löschen", command=lambda: self._note_del("muendlich")).pack(side=tk.LEFT)
-        ttk.Label(mbf, text="(Manuell – bewertete UL siehe Tab Unterrichtsleistungen)", foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
-        self.m_avg = ttk.Label(self.m_frame, text="Durchschnitt: -"); self.m_avg.pack(anchor="w", pady=(5, 0))
+        self.m_avg = ttk.Label(self.m_frame, text=""); self.m_avg.pack(anchor="w", pady=(5, 0))
         self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
         self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         self.s_lb = tk.Listbox(self.s_frame, height=5, exportselection=False); self.s_lb.pack(fill=tk.BOTH, expand=True)
@@ -1099,14 +1220,12 @@ class NotenVerwaltungApp:
         self.s_sp = ttk.Spinbox(sbf, from_=1, to=6, width=5); self.s_sp.pack(side=tk.LEFT, padx=(0, 5)); self.s_sp.set(1)
         ttk.Button(sbf, text="Note eintragen", command=lambda: self._note_add("schriftlich")).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(sbf, text="Löschen", command=lambda: self._note_del("schriftlich")).pack(side=tk.LEFT)
-        ttk.Label(sbf, text="(Manuell – Klausurnoten siehe Tab Klausuren)", foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
-        self.s_avg = ttk.Label(self.s_frame, text="Durchschnitt: -"); self.s_avg.pack(anchor="w", pady=(5, 0))
+        self.s_avg = ttk.Label(self.s_frame, text=""); self.s_avg.pack(anchor="w", pady=(5, 0))
         self.g_lbl = ttk.Label(nf, text="Gesamtnote: -", style="G.TLabel"); self.g_lbl.pack(anchor="w", pady=(10, 0))
-        self.gw_info = ttk.Label(nf, text=f"({gm}% Unterrichtsleistung + {gs}% schriftlich)", style="I.TLabel"); self.gw_info.pack(anchor="w")
+        self.gw_info = ttk.Label(nf, text=f"({gm}% UL + {gs}% Schriftlich)", style="I.TLabel"); self.gw_info.pack(anchor="w")
         self.j_lbl = ttk.Label(nf, text="Jahresnote: -", style="J.TLabel"); self.j_lbl.pack(anchor="w", pady=(8, 0))
         ttk.Label(nf, text="(Gesamtnote über beide Halbjahre)", style="I.TLabel").pack(anchor="w")
 
-    # ---- Klausuren-Tab ----
     def _build_klausuren_tab(self):
         kf = ttk.Frame(self.nb, padding=5); self.nb.add(kf, text="  Klausuren  ")
         top = ttk.Frame(kf); top.pack(fill=tk.X, pady=(0, 5))
@@ -1118,6 +1237,7 @@ class NotenVerwaltungApp:
         ttk.Button(btn_frame, text="Hinzufügen", command=self._klausur_add).pack(fill=tk.X, pady=1)
         ttk.Button(btn_frame, text="Löschen", command=self._klausur_del).pack(fill=tk.X, pady=1)
         ttk.Button(btn_frame, text="Punkte\nbearbeiten", command=self._klausur_punkte).pack(fill=tk.X, pady=1)
+        ttk.Button(btn_frame, text="Gewichtung", command=self._klausur_gewichtung).pack(fill=tk.X, pady=1)
         ttk.Button(top, text="Noten-\nschlüssel", command=self._ns_csv_edit).pack(side=tk.LEFT, padx=(5, 0))
         self.kl_tree = ttk.Treeview(kf, columns=("info",), show="headings", height=10)
         self.kl_tree.heading("info", text="Keine Klausur ausgewählt"); self.kl_tree.column("info", width=400)
@@ -1125,7 +1245,6 @@ class NotenVerwaltungApp:
         self.kl_tree.configure(yscrollcommand=tree_scroll.set)
         self.kl_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-    # ---- Unterrichtsleistungen-Tab ----
     def _build_ul_tab(self):
         uf = ttk.Frame(self.nb, padding=5); self.nb.add(uf, text="  Unterrichtsleistungen  ")
         top = ttk.Frame(uf); top.pack(fill=tk.X, pady=(0, 5))
@@ -1137,6 +1256,7 @@ class NotenVerwaltungApp:
         ttk.Button(btn_frame, text="Hinzufügen", command=self._ul_add).pack(fill=tk.X, pady=1)
         ttk.Button(btn_frame, text="Löschen", command=self._ul_del).pack(fill=tk.X, pady=1)
         ttk.Button(btn_frame, text="Punkte\nbearbeiten", command=self._ul_punkte).pack(fill=tk.X, pady=1)
+        ttk.Button(btn_frame, text="Gewichtung", command=self._ul_gewichtung).pack(fill=tk.X, pady=1)
         self.ul_tree = ttk.Treeview(uf, columns=("info",), show="headings", height=10)
         self.ul_tree.heading("info", text="Keine Unterrichtsleistung ausgewählt"); self.ul_tree.column("info", width=400)
         tree_scroll = ttk.Scrollbar(uf, orient=tk.VERTICAL, command=self.ul_tree.yview)
@@ -1233,7 +1353,7 @@ class NotenVerwaltungApp:
         fach = self._fach()
         if not kl or not sk or not fach:
             self.info_lbl.config(text="Bitte Klasse, Fach und Schülerin auswählen"); self.ns_lbl.config(text="")
-            self.m_avg.config(text="Durchschnitt: -"); self.s_avg.config(text="Durchschnitt: -")
+            self.m_avg.config(text=""); self.s_avg.config(text="")
             self.g_lbl.config(text="Gesamtnote: -"); self.j_lbl.config(text="Jahresnote: -"); return
         sj, hj = self._sj(), self._hj(); kl_name = self._parse_kl_name(kl)
         sd = self.daten._get_schueler_dict(sj, kl_name)
@@ -1241,31 +1361,45 @@ class NotenVerwaltungApp:
         d = sd[sk]; ns = self.daten.get_notenschluessel(sj, kl_name); nb = self.daten.get_notenbereich(sj, kl_name)
         self.info_lbl.config(text=f"{d['nachname']}, {d['vorname']} – {fach} ({kl_name}) — {hj}")
         self.ns_lbl.config(text=f"Notenschlüssel: {ns} (Noten {nb[0]}–{nb[1]})")
-        # Unterrichtsleistung (manuell)
+        # UL
+        remaining_ul = self.daten.get_remaining_ul_pct(sj, kl_name, fach, hj)
         muendlich = self.daten._get_muendlich(sj, kl_name, fach, sk, hj)
         for i, n in enumerate(muendlich): self.m_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        # Unterrichtsleistung (bewertet)
-        ul_notes = self.daten.get_ul_noten(sj, kl_name, fach, sk, hj)
+        ul_notes_gw = self.daten.get_ul_noten_gewichtet(sj, kl_name, fach, sk, hj)
         uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
-        for i, n in enumerate(ul_notes):
+        for i, (n, gw) in enumerate(ul_notes_gw):
             uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
             n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
-            self.m_lb.insert(tk.END, f"  UL: {uname} → {n_str}")
-        ul_all = self.daten.get_ul_all(sj, kl_name, fach, sk, hj)
-        sm = self.daten.durchschnitt(ul_all)
-        self.m_avg.config(text=f"Durchschnitt: {sm:.2f}" if sm is not None else "Durchschnitt: -")
+            self.m_lb.insert(tk.END, f"  UL: {uname} ({gw}%) → {n_str}")
+        # UL Info
+        ul_info_parts = []
+        if muendlich:
+            avg_m = sum(muendlich) / len(muendlich)
+            ul_info_parts.append(f"Manuell Ø {avg_m:.1f} ({remaining_ul:.0f}%)")
+        if ul_notes_gw:
+            for i, (n, gw) in enumerate(ul_notes_gw):
+                uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
+                ul_info_parts.append(f"{uname} ({gw}%)")
+        self.m_avg.config(text=" | ".join(ul_info_parts) if ul_info_parts else "")
         # Schriftlich
+        remaining_schr = self.daten.get_remaining_schriftlich_pct(sj, kl_name, fach, hj)
         schriftlich = self.daten._get_schriftlich(sj, kl_name, fach, sk, hj)
         for i, n in enumerate(schriftlich): self.s_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        kn_notes = self.daten.get_klausur_noten(sj, kl_name, fach, sk, hj)
+        kn_notes_gw = self.daten.get_klausur_noten_gewichtet(sj, kl_name, fach, sk, hj)
         klausuren = self.daten.get_klausuren(sj, kl_name, fach, hj)
-        for i, n in enumerate(kn_notes):
+        for i, (n, gw) in enumerate(kn_notes_gw):
             kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
             n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
-            self.s_lb.insert(tk.END, f"  K: {kname} → {n_str}")
-        all_schr = self.daten.get_schriftlich_all(sj, kl_name, fach, sk, hj)
-        ss = self.daten.durchschnitt(all_schr)
-        self.s_avg.config(text=f"Durchschnitt: {ss:.2f}" if ss is not None else "Durchschnitt: -")
+            self.s_lb.insert(tk.END, f"  K: {kname} ({gw}%) → {n_str}")
+        schr_info_parts = []
+        if schriftlich:
+            avg_s = sum(schriftlich) / len(schriftlich)
+            schr_info_parts.append(f"Manuell Ø {avg_s:.1f} ({remaining_schr:.0f}%)")
+        if kn_notes_gw:
+            for i, (n, gw) in enumerate(kn_notes_gw):
+                kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
+                schr_info_parts.append(f"{kname} ({gw}%)")
+        self.s_avg.config(text=" | ".join(schr_info_parts) if schr_info_parts else "")
         gn = self.daten.gesamtnote_hj(sj, kl_name, fach, sk, hj)
         self.g_lbl.config(text=f"Gesamtnote ({hj}): {gn:.2f}" if gn is not None else f"Gesamtnote ({hj}): -")
         jn = self.daten.gesamtnote_jahr(sj, kl_name, fach, sk)
@@ -1288,7 +1422,8 @@ class NotenVerwaltungApp:
         klausuren = self.daten.get_klausuren(sj, kl_name, fach, hj)
         for i, k in enumerate(klausuren):
             max_p = sum(k["max_punkte_pro_aufgabe"]); anzahl = len(k["max_punkte_pro_aufgabe"])
-            self.kl_klausur_lb.insert(tk.END, f"{k['name']} (max {max_p} P., {anzahl} Aufg.)")
+            gw = k.get("gewichtung", 0)
+            self.kl_klausur_lb.insert(tk.END, f"{k['name']} ({gw}%, max {max_p} P., {anzahl} Aufg.)")
         if keep_selection is not None and keep_selection < len(klausuren):
             self.kl_klausur_lb.selection_set(keep_selection); self.kl_klausur_lb.see(keep_selection)
         for item in self.kl_tree.get_children(): self.kl_tree.delete(item)
@@ -1335,7 +1470,8 @@ class NotenVerwaltungApp:
         uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
         for i, ul in enumerate(uls):
             max_p = sum(ul["max_punkte_pro_aufgabe"]); anzahl = len(ul["max_punkte_pro_aufgabe"])
-            self.ul_lb.insert(tk.END, f"{ul['name']} (max {max_p} P., {anzahl} Aufg.)")
+            gw = ul.get("gewichtung", 0)
+            self.ul_lb.insert(tk.END, f"{ul['name']} ({gw}%, max {max_p} P., {anzahl} Aufg.)")
         if keep_selection is not None and keep_selection < len(uls):
             self.ul_lb.selection_set(keep_selection); self.ul_lb.see(keep_selection)
         for item in self.ul_tree.get_children(): self.ul_tree.delete(item)
@@ -1370,7 +1506,7 @@ class NotenVerwaltungApp:
     def _refresh_gw_labels(self):
         gm = self.daten.gewichtung_muendlich; gs = 100 - gm
         self.m_frame.config(text=f"Unterrichtsleistung ({gm}%)"); self.s_frame.config(text=f"Schriftliche Noten ({gs}%)")
-        self.gw_info.config(text=f"({gm}% Unterrichtsleistung + {gs}% schriftlich)")
+        self.gw_info.config(text=f"({gm}% UL + {gs}% Schriftlich)")
 
     # ---- Events ----
     def _on_sj(self, e): self._refresh_kl(); self._refresh_fach(None); self._refresh_sk(None); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
@@ -1474,7 +1610,6 @@ class NotenVerwaltungApp:
         if not messagebox.askyesno("Bestätigung", f"Schülerin '{sk}' wirklich löschen?"): return
         self.daten.schuelerin_loeschen(sj, kl_name, sk); self._save(); self._refresh_sk(kl); self._refresh_noten(None, None)
 
-    # ---- CRUD Fächer ----
     def _fach_add(self):
         sj, kl = self._sj(), self._kl()
         if not sj or not kl: messagebox.showwarning("Warnung", "Bitte Schuljahr und Klasse auswählen!"); return
@@ -1492,7 +1627,6 @@ class NotenVerwaltungApp:
         if not messagebox.askyesno("Bestätigung", f"Fach '{fach}' wirklich löschen?\nAlle Noten und Klausuren gehen verloren!"): return
         self.daten.fach_loeschen(sj, kl_name, fach); self._save(); self._refresh_fach(kl); self._refresh_noten(None, None); self._refresh_klausuren(); self._refresh_ul()
 
-    # ---- CRUD Noten ----
     def _note_add(self, typ):
         sj, hj, kl, sk = self._sj(), self._hj(), self._kl(), self._sk()
         fach = self._fach()
@@ -1564,8 +1698,21 @@ class NotenVerwaltungApp:
         saved = 0
         for sk, punkte in dlg.result.items():
             if self.daten.klausur_punkte_setzen(sj, kl_name, fach, hj, kidx, sk, punkte): saved += 1
-            else: logging.warning(f"Punkte für {sk} konnten nicht gespeichert werden")
         if saved == 0 and dlg.result: messagebox.showwarning("Fehler", "Punkte konnten nicht gespeichert werden!", parent=self.root)
+        self._save(); self._refresh_klausuren(); self._refresh_noten(self._kl(), self._sk())
+
+    def _klausur_gewichtung(self):
+        sj, hj, kl = self._sj(), self._hj(), self._kl(); fach = self._fach()
+        if not sj or not kl or not fach: messagebox.showwarning("Warnung", "Bitte Schuljahr, Klasse und Fach auswählen!"); return
+        kl_name = self._parse_kl_name(kl)
+        sel = self.kl_klausur_lb.curselection()
+        if not sel: messagebox.showwarning("Warnung", "Bitte eine Klausur auswählen!"); return
+        kidx = sel[0]; klausur = self.daten.get_klausuren(sj, kl_name, fach, hj)[kidx]
+        remaining = self.daten.get_remaining_schriftlich_pct(sj, kl_name, fach, hj)
+        dlg = GewichtungDialog(self.root, "Gewichtung ändern: Klausur", klausur["name"],
+                               klausur.get("gewichtung", 0), self.daten.schriftlich_prozent, remaining)
+        if dlg.result is None: return
+        self.daten.klausur_gewichtung_setzen(sj, kl_name, fach, hj, kidx, dlg.result)
         self._save(); self._refresh_klausuren(); self._refresh_noten(self._kl(), self._sk())
 
     def _ns_csv_edit(self):
@@ -1624,8 +1771,21 @@ class NotenVerwaltungApp:
         saved = 0
         for sk, punkte in dlg.result.items():
             if self.daten.ul_punkte_setzen(sj, kl_name, fach, hj, ulidx, sk, punkte): saved += 1
-            else: logging.warning(f"Punkte für {sk} konnten nicht gespeichert werden")
         if saved == 0 and dlg.result: messagebox.showwarning("Fehler", "Punkte konnten nicht gespeichert werden!", parent=self.root)
+        self._save(); self._refresh_ul(); self._refresh_noten(self._kl(), self._sk())
+
+    def _ul_gewichtung(self):
+        sj, hj, kl = self._sj(), self._hj(), self._kl(); fach = self._fach()
+        if not sj or not kl or not fach: messagebox.showwarning("Warnung", "Bitte Schuljahr, Klasse und Fach auswählen!"); return
+        kl_name = self._parse_kl_name(kl)
+        sel = self.ul_lb.curselection()
+        if not sel: messagebox.showwarning("Warnung", "Bitte eine Unterrichtsleistung auswählen!"); return
+        ulidx = sel[0]; ul = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)[ulidx]
+        remaining = self.daten.get_remaining_ul_pct(sj, kl_name, fach, hj)
+        dlg = GewichtungDialog(self.root, "Gewichtung ändern: Unterrichtsleistung", ul["name"],
+                               ul.get("gewichtung", 0), self.daten.ul_prozent, remaining)
+        if dlg.result is None: return
+        self.daten.ul_gewichtung_setzen(sj, kl_name, fach, hj, ulidx, dlg.result)
         self._save(); self._refresh_ul(); self._refresh_noten(self._kl(), self._sk())
 
 
