@@ -1623,65 +1623,56 @@ class NotenVerwaltungApp:
         hf.pack(fill=tk.BOTH, expand=True)
         # Einstellungen
         top = ttk.LabelFrame(hf, text="Einstellungen", padding=5)
-        top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 5))
-        ttk.Label(top, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
+        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+        # Zeile 1: Schuljahr, Halbjahr, Gewichtung
+        row1 = ttk.Frame(top)
+        row1.pack(fill=tk.X, pady=(0, 3))
+        ttk.Label(row1, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
         self.sj_var = tk.StringVar()
-        self.sj_cb = ttk.Combobox(top, textvariable=self.sj_var, state="readonly", width=12)
+        self.sj_cb = ttk.Combobox(row1, textvariable=self.sj_var, state="readonly", width=12)
         self.sj_cb.pack(side=tk.LEFT, padx=(0, 5))
         self.sj_cb.bind("<<ComboboxSelected>>", self._on_sj)
-        ttk.Button(top, text="+", width=3, command=self._sj_add).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(top, text="−", width=3, command=self._sj_del).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(top, text="Halbjahr:").pack(side=tk.LEFT, padx=(5, 3))
+        ttk.Button(row1, text="+", width=3, command=self._sj_add).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(row1, text="−", width=3, command=self._sj_del).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        ttk.Label(row1, text="Halbjahr:").pack(side=tk.LEFT, padx=(5, 3))
         self.hj_var = tk.StringVar()
-        self.hj_cb = ttk.Combobox(top, textvariable=self.hj_var, state="readonly", width=12)
+        self.hj_cb = ttk.Combobox(row1, textvariable=self.hj_var, state="readonly", width=12)
         self.hj_cb.pack(side=tk.LEFT, padx=(0, 10))
         self.hj_cb['values'] = HALBJAHRE
         self.hj_var.set(HALBJAHRE[0])
         self.hj_cb.bind("<<ComboboxSelected>>", lambda e: self._refresh_all())
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(top, text="Fach:").pack(side=tk.LEFT, padx=(5, 3))
+        # Zeile 2: Klasse, Fach
+        row2 = ttk.Frame(top)
+        row2.pack(fill=tk.X)
+        ttk.Label(row2, text="Klasse:").pack(side=tk.LEFT, padx=(0, 3))
+        self.kl_var = tk.StringVar()
+        self.kl_cb = ttk.Combobox(row2, textvariable=self.kl_var, state="readonly", width=12)
+        self.kl_cb.pack(side=tk.LEFT, padx=(0, 2))
+        self.kl_cb.bind("<<ComboboxSelected>>", self._on_kl)
+        kl_menu = ttk.Frame(row2)
+        kl_menu.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(kl_menu, text="+", width=3, command=self._kl_add).pack(side=tk.LEFT, padx=(0, 1))
+        ttk.Button(kl_menu, text="→", width=3, command=self._kl_uebertragen).pack(side=tk.LEFT, padx=(0, 1))
+        ttk.Button(kl_menu, text="−", width=3, command=self._kl_del).pack(side=tk.LEFT)
+        ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        ttk.Label(row2, text="Fach:").pack(side=tk.LEFT, padx=(5, 3))
         self.fach_var = tk.StringVar()
-        self.fach_cb = ttk.Combobox(top, textvariable=self.fach_var, state="readonly", width=14)
+        self.fach_cb = ttk.Combobox(row2, textvariable=self.fach_var, state="readonly", width=14)
         self.fach_cb.pack(side=tk.LEFT, padx=(0, 2))
         self.fach_cb.bind("<<ComboboxSelected>>", self._on_fach)
-        ttk.Button(top, text="+", width=3, command=self._fach_add).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(top, text="−", width=3, command=self._fach_del).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(top, text="Gewichtung UL:").pack(side=tk.LEFT, padx=(5, 3))
-        self.gw_var = tk.StringVar(value=str(gm))
-        self.gw_sb = ttk.Spinbox(top, from_=0, to=100, width=4, textvariable=self.gw_var,
-                                  command=self._on_gw)
-        self.gw_sb.pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Label(top, text="%  /  Schriftlich:").pack(side=tk.LEFT)
-        self.gw_sl = ttk.Label(top, text=f"{gs}%")
-        self.gw_sl.pack(side=tk.LEFT, padx=(0, 5))
-        self.gw_sb.bind("<Return>", lambda e: self._on_gw())
-        # Klassen
-        kf = ttk.LabelFrame(hf, text="Klassen", padding=5)
-        kf.grid(row=1, column=0, sticky="nsew", padx=(0, 3))
-        self.kl_lb = tk.Listbox(kf, height=18, width=20, exportselection=False,
-                                 font=("TkDefaultFont", 12), selectbackground="#4a90d9")
-        self.kl_lb.pack(fill=tk.BOTH, expand=True)
-        self.kl_lb.bind("<<ListboxSelect>>", self._on_kl)
-        bf = ttk.Frame(kf)
-        bf.pack(fill=tk.X, pady=(5, 0))
-        ttk.Button(bf, text="Hinzufügen", command=self._kl_add).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(bf, text="Übertragen", command=self._kl_uebertragen).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        ttk.Button(bf, text="Löschen", command=self._kl_del).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        ttk.Button(row2, text="+", width=3, command=self._fach_add).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(row2, text="−", width=3, command=self._fach_del).pack(side=tk.LEFT)
         # Schülerinnen
         sf = ttk.LabelFrame(hf, text="Schülerinnen", padding=5)
-        sf.grid(row=1, column=1, sticky="nsew", padx=3)
-        self.sk_lb = tk.Listbox(sf, height=18, width=24, exportselection=False,
+        sf.grid(row=1, column=0, sticky="nsew", padx=(0, 3))
+        self.sk_lb = tk.Listbox(sf, height=18, width=22, exportselection=False,
                                  font=("TkDefaultFont", 12), selectbackground="#4a90d9")
         self.sk_lb.pack(fill=tk.BOTH, expand=True)
         self.sk_lb.bind("<<ListboxSelect>>", self._on_sk)
         bf2 = ttk.Frame(sf)
         bf2.pack(fill=tk.X, pady=(5, 0))
-        ttk.Button(bf2, text="Hinzufügen", command=self._sk_add).pack(
+        ttk.Button(bf2, text="Neu", command=self._sk_add).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         ttk.Button(bf2, text="Liste", command=self._sk_list_add).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2)
@@ -1689,13 +1680,12 @@ class NotenVerwaltungApp:
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         # Notebook
         self.nb = ttk.Notebook(hf)
-        self.nb.grid(row=1, column=2, sticky="nsew", padx=(3, 0))
+        self.nb.grid(row=1, column=1, sticky="nsew", padx=(3, 0))
         self._build_noten_tab(gm, gs)
         self._build_ul_tab()
         self._build_klausuren_tab()
         hf.columnconfigure(0, weight=1)
-        hf.columnconfigure(1, weight=2)
-        hf.columnconfigure(2, weight=4)
+        hf.columnconfigure(1, weight=5)
         hf.rowconfigure(1, weight=1)
         self.root.bind("<Control-o>", lambda e: self._file_open())
         self.root.bind("<Control-O>", lambda e: self._file_open())
@@ -1709,8 +1699,21 @@ class NotenVerwaltungApp:
         self.info_lbl.pack(anchor="w", pady=(0, 2))
         self.ns_lbl = ttk.Label(nf, text="", style="NS.TLabel")
         self.ns_lbl.pack(anchor="w", pady=(0, 5))
-        self.m_frame = ttk.LabelFrame(nf, text=f"Unterrichtsleistung ({gm}%)", padding=5)
+        self.m_frame = ttk.LabelFrame(nf, text="Unterrichtsleistung", padding=5)
         self.m_frame.pack(fill=tk.BOTH, expand=True)
+        gw_bar = ttk.Frame(self.m_frame)
+        gw_bar.pack(fill=tk.X, pady=(0, 3))
+        ttk.Label(gw_bar, text="Gewichtung:").pack(side=tk.LEFT, padx=(0, 3))
+        self.gw_var = tk.StringVar(value=str(gm))
+        self.gw_sb = ttk.Spinbox(gw_bar, from_=0, to=100, width=4, textvariable=self.gw_var,
+                                  command=self._on_gw)
+        self.gw_sb.pack(side=tk.LEFT, padx=(0, 2))
+        self.gw_ul_lbl = ttk.Label(gw_bar, text=f"{gm}%")
+        self.gw_ul_lbl.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(gw_bar, text="Schriftlich:").pack(side=tk.LEFT, padx=(0, 3))
+        self.gw_sl = ttk.Label(gw_bar, text=f"{gs}%")
+        self.gw_sl.pack(side=tk.LEFT)
+        self.gw_sb.bind("<Return>", lambda e: self._on_gw())
         self.m_lb = tk.Listbox(self.m_frame, height=5, exportselection=False,
                                 font=("TkDefaultFont", 12), selectbackground="#4a90d9")
         self.m_lb.pack(fill=tk.BOTH, expand=True)
@@ -1743,8 +1746,6 @@ class NotenVerwaltungApp:
         self.s_avg.pack(anchor="w", pady=(5, 0))
         self.g_lbl = ttk.Label(nf, text="Gesamtnote: -", style="G.TLabel")
         self.g_lbl.pack(anchor="w", pady=(10, 0))
-        self.gw_info = ttk.Label(nf, text=f"({gm}% UL + {gs}% Schriftlich)", style="I.TLabel")
-        self.gw_info.pack(anchor="w")
         self.j_lbl = ttk.Label(nf, text="Jahresnote: -", style="J.TLabel")
         self.j_lbl.pack(anchor="w", pady=(8, 0))
         ttk.Label(nf, text="(Gesamtnote über beide Halbjahre)", style="I.TLabel").pack(anchor="w")
@@ -1863,8 +1864,8 @@ class NotenVerwaltungApp:
         return self.hj_var.get() or HALBJAHRE[0]
 
     def _kl(self) -> Optional[str]:
-        s = self.kl_lb.curselection()
-        return self.kl_lb.get(s[0]) if s else None
+        v = self.kl_var.get()
+        return v if v else None
 
     def _fach(self) -> Optional[str]:
         v = self.fach_var.get()
@@ -1897,17 +1898,23 @@ class NotenVerwaltungApp:
             self._refresh_kl()
         else:
             self.sj_var.set("")
-            self.kl_lb.delete(0, tk.END)
+            self.kl_var.set("")
+            self.kl_cb['values'] = []
             self._refresh_sk(None)
             self._refresh_noten(None, None)
 
     def _refresh_kl(self) -> None:
-        self.kl_lb.delete(0, tk.END)
         sj = self._sj()
+        current = self.kl_var.get()
         if sj and sj in self.daten.schuljahre:
-            for k in sorted(self.daten.schuljahre[sj]):
-                ns = self.daten.get_notenschluessel(sj, k)
-                self.kl_lb.insert(tk.END, f"{k} [{ns}]")
+            values = [f"{k} [{self.daten.get_notenschluessel(sj, k)}]"
+                      for k in sorted(self.daten.schuljahre[sj])]
+            self.kl_cb['values'] = values
+            if current not in values:
+                self.kl_var.set(values[0] if values else "")
+        else:
+            self.kl_cb['values'] = []
+            self.kl_var.set("")
 
     def _refresh_fach(self, kl: Optional[str]) -> None:
         sj = self._sj()
@@ -2093,9 +2100,9 @@ class NotenVerwaltungApp:
     def _refresh_gw_labels(self) -> None:
         gm = self.daten.gewichtung_muendlich
         gs = 100 - gm
-        self.m_frame.config(text=f"Unterrichtsleistung ({gm}%)")
+        self.gw_ul_lbl.config(text=f"{gm}%")
+        self.gw_sl.config(text=f"{gs}%")
         self.s_frame.config(text=f"Schriftliche Noten ({gs}%)")
-        self.gw_info.config(text=f"({gm}% UL + {gs}% Schriftlich)")
 
     # ---- Events ----
     def _on_sj(self, e) -> None:
@@ -2187,6 +2194,10 @@ class NotenVerwaltungApp:
             return
         self._save()
         self._refresh_kl()
+        # Neue Klasse im Dropdown auswählen
+        ns_display = self.daten.get_notenschluessel(sj, k)
+        self.kl_var.set(f"{k} [{ns_display}]")
+        self._on_kl(None)
 
     def _kl_del(self) -> None:
         sj = self._sj()
