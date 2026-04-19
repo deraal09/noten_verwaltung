@@ -733,6 +733,81 @@ class NotenVerwaltung:
         prozent = self._round_pct(sum(punkte) / max_p * 100)
         return self.ns_csv_lookup(prozent, self.get_ns_csv(sj, k))
 
+    def klausur_durchschnitt_berechnen(self, sj: str, k: str, fach: str, hj: str,
+                                        kidx: int) -> Optional[float]:
+        """Berechnet den Durchschnitt aller Schülerinnennoten für eine Klausur."""
+        f = self._get_fach(sj, k, fach)
+        if f is None:
+            return None
+        klist = f.get("klausuren", {}).get(hj, [])
+        if not (0 <= kidx < len(klist)):
+            return None
+        klausur = klist[kidx]
+        ergebnisse = klausur.get("ergebnisse", {})
+
+        noten = []
+        for sk in ergebnisse:
+            punkte = ergebnisse[sk]
+            if any(p is None for p in punkte):
+                continue
+            max_p = sum(klausur["max_punkte_pro_aufgabe"])
+            if max_p == 0:
+                continue
+            prozent = self._round_pct(sum(punkte) / max_p * 100)
+            note = self.ns_csv_lookup(prozent, self.get_ns_csv(sj, k))
+            if note is not None:
+                noten.append(note)
+
+        return round(sum(noten) / len(noten), 2) if noten else None
+
+    def klausur_nicht_bestanden_count(self, sj: str, k: str, fach: str, hj: str,
+                                       kidx: int) -> tuple:
+        """Zählt die nicht bestandenen Noten für eine Klausur.
+
+        Returns:
+            tuple: (anzahl_nicht_bestanden, gesamt_anzahl, prozent_nicht_bestanden, warnung)
+        """
+        f = self._get_fach(sj, k, fach)
+        if f is None:
+            return (0, 0, 0.0, False)
+        klist = f.get("klausuren", {}).get(hj, [])
+        if not (0 <= kidx < len(klist)):
+            return (0, 0, 0.0, False)
+
+        klausur = klist[kidx]
+        ergebnisse = klausur.get("ergebnisse", {})
+        ns = self.get_notenschluessel(sj, k)
+
+        nicht_bestanden = 0
+        gesamt = 0
+
+        for sk in ergebnisse:
+            punkte = ergebnisse[sk]
+            if any(p is None for p in punkte):
+                continue
+            max_p = sum(klausur["max_punkte_pro_aufgabe"])
+            if max_p == 0:
+                continue
+
+            prozent = self._round_pct(sum(punkte) / max_p * 100)
+            note = self.ns_csv_lookup(prozent, self.get_ns_csv(sj, k))
+
+            if note is not None:
+                gesamt += 1
+                # IHK: Note > 4.5 ist nicht bestanden
+                # BG: Note < 4 ist nicht bestanden
+                if ns == "BG":
+                    if note < 4:
+                        nicht_bestanden += 1
+                else:  # IHK
+                    if note > 4.5:
+                        nicht_bestanden += 1
+
+        prozent = (nicht_bestanden / gesamt * 100) if gesamt > 0 else 0.0
+        warnung = prozent > 30.0
+
+        return (nicht_bestanden, gesamt, round(prozent, 1), warnung)
+
     def get_klausur_noten_gewichtet(self, sj: str, k: str, fach: str,
                                      sk: str, hj: str) -> list:
         klausuren = self.get_klausuren(sj, k, fach, hj)
@@ -1258,23 +1333,26 @@ class PunkteDialog(_CenteredToplevel):
     """Dialog zum Bearbeiten von Punkten für Klausuren oder Unterrichtsleistungen."""
 
     def __init__(self, parent, title: str, name: str, max_punkte_pro_aufgabe: list,
-                 schuelerinnen: list, existing_ergebnisse: dict, ns_csv_str: str):
+                 schuelerinnen: list, existing_ergebnisse: dict, ns_csv_str: str,
+                 notenschluessel_typ: str = "IHK"):
         super().__init__(parent)
         self.title(title)
-        self.geometry("750x500")
-        self.minsize(600, 400)
+        self.geometry("850x550")
+        self.minsize(700, 450)
         self.transient(parent)
         self.grab_set()
         self.max_punkte = max_punkte_pro_aufgabe
         self.schuelerinnen = schuelerinnen
         self.existing_ergebnisse = existing_ergebnisse
         self.ns_csv = ns_csv_str
+        self.ns_typ = notenschluessel_typ  # "IHK" oder "BG"
         self.result = None
+        self.num_cols = len(max_punkte_pro_aufgabe)
+        self.ges_max = sum(max_punkte_pro_aufgabe)
         hf = ttk.Frame(self, padding=5)
         hf.pack(fill=tk.X)
         ttk.Label(hf, text=f"{name}", font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
-        ges_max = sum(max_punkte_pro_aufgabe)
-        ttk.Label(hf, text=f"  |  Max. Punkte: {ges_max} ({', '.join(str(p) for p in max_punkte_pro_aufgabe)})",
+        ttk.Label(hf, text=f"  |  Max. Punkte: {self.ges_max} ({', '.join(str(p) for p in max_punkte_pro_aufgabe)})",
                   foreground="gray").pack(side=tk.LEFT)
         container = ttk.Frame(self)
         container.pack(fill=tk.BOTH, expand=True, padx=5)
@@ -1289,6 +1367,7 @@ class PunkteDialog(_CenteredToplevel):
         canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
         canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
         canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+        # Headers
         headers = ["Schülerin"] + [f"A{i+1} (/{p})" for i, p in enumerate(max_punkte_pro_aufgabe)] + ["Gesamt", "%", "Note"]
         for c, h in enumerate(headers):
             ttk.Label(self.inner, text=h, font=("TkDefaultFont", 9, "bold")).grid(
@@ -1310,15 +1389,36 @@ class PunkteDialog(_CenteredToplevel):
                 row_entries.append(e)
             self.entries[sk] = row_entries
             lbl_g = ttk.Label(self.inner, text="", width=7)
-            lbl_g.grid(row=r, column=len(max_punkte_pro_aufgabe) + 1, padx=2)
+            lbl_g.grid(row=r, column=self.num_cols + 1, padx=2)
             lbl_p = ttk.Label(self.inner, text="", width=7)
-            lbl_p.grid(row=r, column=len(max_punkte_pro_aufgabe) + 2, padx=2)
+            lbl_p.grid(row=r, column=self.num_cols + 2, padx=2)
             lbl_n = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 9, "bold"))
-            lbl_n.grid(row=r, column=len(max_punkte_pro_aufgabe) + 3, padx=2)
+            lbl_n.grid(row=r, column=self.num_cols + 3, padx=2)
             self.labels_ges[r] = lbl_g
             self.labels_pct[r] = lbl_p
             self.labels_note[r] = lbl_n
             self._update_row(r)
+        # Abstand vor "Unterm Strich"
+        ttk.Frame(self.inner, height=10).grid(row=len(schuelerinnen) + 1, column=0, pady=5)
+        # "Unterm Strich" Zeile
+        self.unter_strich_row = len(schuelerinnen) + 2
+        ttk.Separator(self.inner, orient=tk.HORIZONTAL).grid(
+            row=self.unter_strich_row, column=0, columnspan=self.num_cols + 4, sticky="ew", pady=(5, 5))
+        ttk.Label(self.inner, text="⸺ Unterm Strich:", font=("TkDefaultFont", 10, "bold")).grid(
+            row=self.unter_strich_row + 1, column=0, sticky="w", padx=2, pady=5)
+        # Durchschnitt pro Aufgabe
+        self.labels_avg_per_task = []
+        for c in range(self.num_cols):
+            lbl = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 9, "bold"), foreground="#2a5da8")
+            lbl.grid(row=self.unter_strich_row + 1, column=c + 1, padx=2)
+            self.labels_avg_per_task.append(lbl)
+        # Gesamt, %, Note unterm Strich
+        self.lbl_ul_ges = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
+        self.lbl_ul_ges.grid(row=self.unter_strich_row + 1, column=self.num_cols + 1, padx=2)
+        self.lbl_ul_pct = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
+        self.lbl_ul_pct.grid(row=self.unter_strich_row + 1, column=self.num_cols + 2, padx=2)
+        self.lbl_ul_note = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 11, "bold"), foreground="#c44")
+        self.lbl_ul_note.grid(row=self.unter_strich_row + 1, column=self.num_cols + 3, padx=2)
         bf = ttk.Frame(self, padding=5)
         bf.pack(fill=tk.X)
         ttk.Button(bf, text="Alle berechnen", command=self._update_all).pack(side=tk.LEFT, padx=5)
@@ -1358,6 +1458,16 @@ class PunkteDialog(_CenteredToplevel):
             note_str = (f"{note:.0f}" if note is not None and note == int(note)
                         else (f"{note:.1f}" if note is not None else "-"))
             self.labels_note[r].config(text=note_str)
+            # Nicht bestanden: IHK Note > 4.4, BG Note < 3.5
+            if note is not None:
+                if self.ns_typ == "IHK" and note > 4.4:
+                    self.labels_note[r].config(foreground="#c44")
+                elif self.ns_typ == "BG" and note < 3.5:
+                    self.labels_note[r].config(foreground="#c44")
+                else:
+                    self.labels_note[r].config(foreground="black")
+            else:
+                self.labels_note[r].config(foreground="black")
         else:
             self.labels_ges[r].config(text="")
             self.labels_pct[r].config(text="")
@@ -1366,6 +1476,51 @@ class PunkteDialog(_CenteredToplevel):
     def _update_all(self) -> None:
         for r in range(1, len(self.schuelerinnen) + 1):
             self._update_row(r)
+        self._update_unter_strich()
+
+    def _update_unter_strich(self) -> None:
+        """Berechnet und aktualisiert die 'Unterm Strich' Zeile mit Durchschnitten."""
+        all_points_per_task = [[] for _ in range(self.num_cols)]
+        all_total_points = []
+        all_pcts = []
+
+        for r in range(1, len(self.schuelerinnen) + 1):
+            pts = self._get_row_points(r)
+            if all(p is not None for p in pts):
+                for c, p in enumerate(pts):
+                    all_points_per_task[c].append(p)
+                ges = sum(pts)
+                all_total_points.append(ges)
+                max_p = sum(self.max_punkte)
+                pct_raw = ges / max_p * 100 if max_p > 0 else 0
+                pct = NotenVerwaltung._round_pct(pct_raw)
+                all_pcts.append(pct)
+
+        # Durchschnitt pro Aufgabe in Prozent
+        for c in range(self.num_cols):
+            if all_points_per_task[c]:
+                avg = sum(all_points_per_task[c]) / len(all_points_per_task[c])
+                pct_avg = NotenVerwaltung._round_pct(avg / self.max_punkte[c] * 100) if self.max_punkte[c] > 0 else 0
+                self.labels_avg_per_task[c].config(text=f"Ø{pct_avg}%")
+            else:
+                self.labels_avg_per_task[c].config(text="")
+
+        # Gesamt, %, Note unterm Strich
+        if all_total_points and all_pcts:
+            ges_avg = sum(all_total_points) / len(all_total_points)
+            pct_avg = sum(all_pcts) / len(all_pcts)
+            pct_rounded = NotenVerwaltung._round_pct(pct_avg)
+            note = NotenVerwaltung.ns_csv_lookup(pct_rounded, self.ns_csv)
+
+            self.lbl_ul_ges.config(text=f"Ø{ges_avg:.1f}/{self.ges_max}")
+            self.lbl_ul_pct.config(text=f"Ø{pct_rounded}%")
+            note_str = (f"{note:.0f}" if note is not None and float(note).is_integer()
+                        else (f"{note:.1f}" if note is not None else "-"))
+            self.lbl_ul_note.config(text=f"Ø{note_str}")
+        else:
+            self.lbl_ul_ges.config(text="")
+            self.lbl_ul_pct.config(text="")
+            self.lbl_ul_note.config(text="")
 
     def _ok(self) -> None:
         self.result = {}
@@ -1727,7 +1882,9 @@ class NotenVerwaltungApp:
         ttk.Button(mbf, text="Löschen",
                    command=lambda: self._note_del("muendlich")).pack(side=tk.LEFT)
         self.m_avg = ttk.Label(self.m_frame, text="")
-        self.m_avg.pack(anchor="w", pady=(5, 0))
+        self.m_avg.pack(anchor="w", pady=(0, 2))
+        self.m_count_lbl = ttk.Label(self.m_frame, text="", style="I.TLabel")
+        self.m_count_lbl.pack(anchor="w", pady=(0, 0))
         self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
         self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         self.s_lb = tk.Listbox(self.s_frame, height=5, exportselection=False,
@@ -1743,7 +1900,9 @@ class NotenVerwaltungApp:
         ttk.Button(sbf, text="Löschen",
                    command=lambda: self._note_del("schriftlich")).pack(side=tk.LEFT)
         self.s_avg = ttk.Label(self.s_frame, text="")
-        self.s_avg.pack(anchor="w", pady=(5, 0))
+        self.s_avg.pack(anchor="w", pady=(0, 2))
+        self.s_count_lbl = ttk.Label(self.s_frame, text="", style="I.TLabel")
+        self.s_count_lbl.pack(anchor="w", pady=(0, 0))
         self.g_lbl = ttk.Label(nf, text="Gesamtnote: -", style="G.TLabel")
         self.g_lbl.pack(anchor="w", pady=(10, 0))
         self.j_lbl = ttk.Label(nf, text="Jahresnote: -", style="J.TLabel")
@@ -1946,7 +2105,9 @@ class NotenVerwaltungApp:
             self.info_lbl.config(text="Bitte Klasse, Fach und Schülerin auswählen")
             self.ns_lbl.config(text="")
             self.m_avg.config(text="")
+            self.m_count_lbl.config(text="")
             self.s_avg.config(text="")
+            self.s_count_lbl.config(text="")
             self.g_lbl.config(text="Gesamtnote: -")
             self.j_lbl.config(text="Jahresnote: -")
             return
@@ -1981,6 +2142,18 @@ class NotenVerwaltungApp:
                 uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
                 ul_info_parts.append(f"{uname} ({gw}%)")
         self.m_avg.config(text=" | ".join(ul_info_parts) if ul_info_parts else "")
+        # Anzahl UL-Noten anzeigen
+        ul_count = len(muendlich)
+        ul_bewertet_count = len(ul_notes_gw)
+        if ul_count > 0 or ul_bewertet_count > 0:
+            parts = []
+            if ul_count > 0:
+                parts.append(f"{ul_count} manuelle Note(n)")
+            if ul_bewertet_count > 0:
+                parts.append(f"{ul_bewertet_count} bewertete UL(s)")
+            self.m_count_lbl.config(text=f"Anzahl: {' | '.join(parts)}")
+        else:
+            self.m_count_lbl.config(text="Anzahl: 0")
         # Schriftlich
         remaining_schr = self.daten.get_remaining_schriftlich_pct(sj, kl_name, fach, hj)
         schriftlich = self.daten.get_schriftlich(sj, kl_name, fach, sk, hj)
@@ -2001,6 +2174,18 @@ class NotenVerwaltungApp:
                 kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
                 schr_info_parts.append(f"{kname} ({gw}%)")
         self.s_avg.config(text=" | ".join(schr_info_parts) if schr_info_parts else "")
+        # Anzahl schriftliche Noten anzeigen
+        schr_count = len(schriftlich)
+        klausur_count = len(kn_notes_gw)
+        if schr_count > 0 or klausur_count > 0:
+            parts = []
+            if schr_count > 0:
+                parts.append(f"{schr_count} manuelle Note(n)")
+            if klausur_count > 0:
+                parts.append(f"{klausur_count} Klausur(n)")
+            self.s_count_lbl.config(text=f"Anzahl: {' | '.join(parts)}")
+        else:
+            self.s_count_lbl.config(text="Anzahl: 0")
         gn = self.daten.gesamtnote_hj(sj, kl_name, fach, sk, hj)
         self.g_lbl.config(text=f"Gesamtnote ({hj}): {gn:.2f}" if gn is not None else f"Gesamtnote ({hj}): -")
         jn = self.daten.gesamtnote_jahr(sj, kl_name, fach, sk)
@@ -2018,6 +2203,8 @@ class NotenVerwaltungApp:
         tree = self.kl_tree if is_klausur else self.ul_tree
         get_list = self.daten.get_klausuren if is_klausur else self.daten.get_unterrichtsleistungen
         note_berechnen = self.daten.klausur_note_berechnen if is_klausur else self.daten.ul_note_berechnen
+        durchschnitt_berechnen = self.daten.klausur_durchschnitt_berechnen if is_klausur else None
+        nicht_bestanden_count = self.daten.klausur_nicht_bestanden_count if is_klausur else None
         label_name = "Klausuren" if is_klausur else "Unterrichtsleistungen"
 
         setattr(self, refreshing_attr, True)
@@ -2038,7 +2225,24 @@ class NotenVerwaltungApp:
                 max_p = sum(item["max_punkte_pro_aufgabe"])
                 anzahl = len(item["max_punkte_pro_aufgabe"])
                 gw = item.get("gewichtung", 0)
-                lb.insert(tk.END, f"{item['name']} ({gw}%, max {max_p} P., {anzahl} Aufg.)")
+                # Durchschnittsnote für Klausuren berechnen und anzeigen
+                durchschnitt_str = ""
+                nicht_bestanden_str = ""
+                if is_klausur:
+                    if durchschnitt_berechnen:
+                        durchschnitt = durchschnitt_berechnen(sj, kl_name, fach, hj, i)
+                        if durchschnitt is not None:
+                            durchschnitt_str = f" [Ø {durchschnitt:.2f}]"
+                    # Nicht bestandene Noten zählen und Warnung anzeigen
+                    if nicht_bestanden_count:
+                        nb_count, nb_gesamt, nb_prozent, nb_warnung = nicht_bestanden_count(sj, kl_name, fach, hj, i)
+                        if nb_gesamt > 0:
+                            nicht_bestanden_str = f" [{nb_count}/{nb_gesamt} nicht best. ({nb_prozent}%)"
+                            if nb_warnung:
+                                nicht_bestanden_str += " ⚠️ GENEHMIGUNG!]"
+                            else:
+                                nicht_bestanden_str += "]"
+                lb.insert(tk.END, f"{item['name']} ({gw}%, max {max_p} P., {anzahl} Aufg.){durchschnitt_str}{nicht_bestanden_str}")
             if keep_selection is not None and keep_selection < len(items):
                 lb.selection_set(keep_selection)
                 lb.see(keep_selection)
@@ -2491,8 +2695,10 @@ class NotenVerwaltungApp:
             messagebox.showinfo("Hinweis", "Keine Schülerinnen in dieser Klasse!")
             return
         csv_str = self.daten.get_ns_csv(sj, kl_name)
+        ns_typ = self.daten.get_notenschluessel(sj, kl_name)
         dlg = PunkteDialog(self.root, dlg_title_prefix, item["name"],
-                           item["max_punkte_pro_aufgabe"], schuelerinnen, item["ergebnisse"], csv_str)
+                           item["max_punkte_pro_aufgabe"], schuelerinnen, item["ergebnisse"], csv_str,
+                           notenschluessel_typ=ns_typ)
         if dlg.result is None:
             return
         saved = 0
