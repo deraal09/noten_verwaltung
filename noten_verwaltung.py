@@ -1706,8 +1706,8 @@ class NotenVerwaltungApp:
     def __init__(self, root: tk.Tk, password: str, data_file: Optional[str] = None):
         self.root = root
         self.root.title("Notenverwaltung")
-        self.root.geometry("1100x680")
-        self.root.minsize(950, 580)
+        self.root.geometry("960x720")
+        self.root.minsize(710, 435)
         self.password = password
         self.data_file = data_file or DATA_FILE
         self.daten = NotenVerwaltung()
@@ -1747,18 +1747,18 @@ class NotenVerwaltungApp:
         gm = self.daten.gewichtung_muendlich
         gs = 100 - gm
         sty = ttk.Style()
-        sty.configure("TButton", font=("TkDefaultFont", 12), padding=(10, 6))
-        sty.configure("TLabel", font=("TkDefaultFont", 12))
-        sty.configure("TNotebook.Tab", font=("TkDefaultFont", 12, "bold"), padding=(18, 8))
-        sty.configure("H.TLabel", font=("TkDefaultFont", 13, "bold"))
-        sty.configure("G.TLabel", font=("TkDefaultFont", 14, "bold"))
-        sty.configure("J.TLabel", font=("TkDefaultFont", 13, "bold"), foreground="#2a5da8")
-        sty.configure("I.TLabel", font=("TkDefaultFont", 10), foreground="gray")
-        sty.configure("NS.TLabel", font=("TkDefaultFont", 11, "bold"), foreground="#c44")
-        sty.configure("TLabelframe.Label", font=("TkDefaultFont", 12, "bold"))
-        sty.configure("TSpinbox", font=("TkDefaultFont", 12), padding=(4, 4))
-        sty.configure("Treeview", font=("TkDefaultFont", 12), rowheight=30)
-        sty.configure("Treeview.Heading", font=("TkDefaultFont", 11, "bold"))
+        sty.configure("TButton", font=("TkDefaultFont", 9), padding=(7, 4))
+        sty.configure("TLabel", font=("TkDefaultFont", 9))
+        sty.configure("TNotebook.Tab", font=("TkDefaultFont", 9, "bold"), padding=(14, 6))
+        sty.configure("H.TLabel", font=("TkDefaultFont", 10, "bold"))
+        sty.configure("G.TLabel", font=("TkDefaultFont", 11, "bold"))
+        sty.configure("J.TLabel", font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
+        sty.configure("I.TLabel", font=("TkDefaultFont", 8), foreground="gray")
+        sty.configure("NS.TLabel", font=("TkDefaultFont", 9, "bold"), foreground="#c44")
+        sty.configure("TLabelframe.Label", font=("TkDefaultFont", 9, "bold"))
+        sty.configure("TSpinbox", font=("TkDefaultFont", 9), padding=(3, 3))
+        sty.configure("Treeview", font=("TkDefaultFont", 9), rowheight=22)
+        sty.configure("Treeview.Heading", font=("TkDefaultFont", 8, "bold"))
         # Menubar
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
@@ -1821,8 +1821,8 @@ class NotenVerwaltungApp:
         # Schülerinnen
         sf = ttk.LabelFrame(hf, text="Schülerinnen", padding=5)
         sf.grid(row=1, column=0, sticky="nsew", padx=(0, 3))
-        self.sk_lb = tk.Listbox(sf, height=18, width=22, exportselection=False,
-                                 font=("TkDefaultFont", 12), selectbackground="#4a90d9")
+        self.sk_lb = tk.Listbox(sf, height=14, width=18, exportselection=False,
+                                 font=("TkDefaultFont", 9), selectbackground="#4a90d9")
         self.sk_lb.pack(fill=tk.BOTH, expand=True)
         self.sk_lb.bind("<<ListboxSelect>>", self._on_sk)
         bf2 = ttk.Frame(sf)
@@ -1869,8 +1869,8 @@ class NotenVerwaltungApp:
         self.gw_sl = ttk.Label(gw_bar, text=f"{gs}%")
         self.gw_sl.pack(side=tk.LEFT)
         self.gw_sb.bind("<Return>", lambda e: self._on_gw())
-        self.m_lb = tk.Listbox(self.m_frame, height=5, exportselection=False,
-                                font=("TkDefaultFont", 12), selectbackground="#4a90d9")
+        self.m_lb = tk.Listbox(self.m_frame, height=4, exportselection=False,
+                                font=("TkDefaultFont", 9), selectbackground="#4a90d9")
         self.m_lb.pack(fill=tk.BOTH, expand=True)
         mbf = ttk.Frame(self.m_frame)
         mbf.pack(fill=tk.X, pady=(5, 0))
@@ -1887,8 +1887,8 @@ class NotenVerwaltungApp:
         self.m_count_lbl.pack(anchor="w", pady=(0, 0))
         self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
         self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-        self.s_lb = tk.Listbox(self.s_frame, height=5, exportselection=False,
-                                font=("TkDefaultFont", 12), selectbackground="#4a90d9")
+        self.s_lb = tk.Listbox(self.s_frame, height=4, exportselection=False,
+                                font=("TkDefaultFont", 9), selectbackground="#4a90d9")
         self.s_lb.pack(fill=tk.BOTH, expand=True)
         sbf = ttk.Frame(self.s_frame)
         sbf.pack(fill=tk.X, pady=(5, 0))
@@ -1912,16 +1912,16 @@ class NotenVerwaltungApp:
     def _build_bewertung_tab(self, parent_frame: ttk.Frame, title: str) -> tuple:
         """Generischer Aufbau für Klausuren/UL-Tabs. Gibt (listbox, btn_frame, tree) zurück."""
         ttk.Label(parent_frame, text=f"{title}:", style="H.TLabel").pack(anchor="w", pady=(0, 5))
-        lb = tk.Listbox(parent_frame, height=5, exportselection=False,
-                         font=("TkDefaultFont", 12), selectbackground="#4a90d9")
+        lb = tk.Listbox(parent_frame, height=4, exportselection=False,
+                         font=("TkDefaultFont", 9), selectbackground="#4a90d9")
         lb.pack(fill=tk.X, pady=(0, 5))
         btn_frame = ttk.Frame(parent_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 5))
         tree_frame = ttk.Frame(parent_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
-        tree = ttk.Treeview(tree_frame, columns=("info",), show="headings", height=8)
+        tree = ttk.Treeview(tree_frame, columns=("info",), show="headings", height=6)
         tree.heading("info", text=f"Keine {title} ausgewählt")
-        tree.column("info", width=400)
+        tree.column("info", width=300)
         tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=tree_scroll.set)
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -2873,8 +2873,8 @@ def _migrate_old_md() -> Optional[NotenVerwaltung]:
 def main() -> None:
     root = tk.Tk()
     root.title("Notenverwaltung")
-    root.geometry("1100x680")
-    root.minsize(950, 580)
+    root.geometry("820x510")
+    root.minsize(710, 435)
     migrated_data = _migrate_old_md()
     first_time = not os.path.exists(DATA_FILE)
     dlg = PasswordDialog(root, title="Passwort setzen" if first_time else "Passwort eingeben",
