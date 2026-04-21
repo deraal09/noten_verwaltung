@@ -104,21 +104,8 @@ class NotenVerwaltungApp:
         top = ttk.LabelFrame(hf, text="Einstellungen", padding=5)
         top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
 
-        # Ein-/Ausklapp-Button mit aktuellen Einstellungen
-        header_frame = ttk.Frame(top)
-        header_frame.pack(anchor="w", pady=(0, 5))
-        self.einstellungen_ausgeklappt = tk.BooleanVar(value=True)
-        einstellungen_btn = ttk.Button(header_frame, text="▼ Einstellungen", width=15,
-                                       command=lambda: self._toggle_einstellungen(top, einstellungen_btn))
-        einstellungen_btn.pack(side=tk.LEFT, padx=(0, 10))
-        self.einstellungen_lbl = ttk.Label(header_frame, text="", font=("TkDefaultFont", 9, "italic"), foreground="gray")
-        self.einstellungen_lbl.pack(side=tk.LEFT)
-
-        # Container für alle Einstellungen
-        self.einstellungen_container = ttk.Frame(top)
-
-        # Zeile 1: Schuljahr, Halbjahr, Gewichtung
-        row1 = ttk.Frame(self.einstellungen_container)
+        # Schuljahr und Halbjahr
+        row1 = ttk.Frame(top)
         row1.pack(fill=tk.X, pady=(0, 3))
         ttk.Label(row1, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
         self.sj_var = tk.StringVar()
@@ -133,34 +120,40 @@ class NotenVerwaltungApp:
         self.hj_cb = ttk.Combobox(row1, textvariable=self.hj_var, state="readonly", width=12)
         self.hj_cb.pack(side=tk.LEFT, padx=(0, 10))
         self.hj_cb['values'] = HALBJAHRE
-        self.hj_var.set(HALBJAHRE[0])
-        self.hj_cb.bind("<<ComboboxSelected>>", lambda e: (self._refresh_all(), self._update_einstellungen_lbl()))
+        self.hj_cb.bind("<<ComboboxSelected>>", self._on_hj)
 
-        # Zeile 2: Klasse, Fach
-        row2 = ttk.Frame(self.einstellungen_container)
-        row2.pack(fill=tk.X)
-        ttk.Label(row2, text="Klasse:").pack(side=tk.LEFT, padx=(0, 3))
+        # Linke Spalte: Klasse und Fach über Schülerinnen
+        left_col = ttk.Frame(hf)
+        left_col.grid(row=1, column=0, sticky="nsew", padx=(0, 3))
+
+        # Klasse und Fach Auswahl
+        kf_frame = ttk.LabelFrame(left_col, text="Klasse & Fach", padding=5)
+        kf_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(kf_frame, text="Klasse:").pack(anchor="w")
         self.kl_var = tk.StringVar()
-        self.kl_cb = ttk.Combobox(row2, textvariable=self.kl_var, state="readonly", width=12)
-        self.kl_cb.pack(side=tk.LEFT, padx=(0, 2))
+        self.kl_cb = ttk.Combobox(kf_frame, textvariable=self.kl_var, state="readonly", width=12)
+        self.kl_cb.pack(fill=tk.X, pady=(2, 2))
         self.kl_cb.bind("<<ComboboxSelected>>", self._on_kl)
-        kl_menu = ttk.Frame(row2)
-        kl_menu.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(kl_menu, text="+", width=3, command=self._kl_add).pack(side=tk.LEFT, padx=(0, 1))
-        ttk.Button(kl_menu, text="→", width=3, command=self._kl_uebertragen).pack(side=tk.LEFT, padx=(0, 1))
-        ttk.Button(kl_menu, text="−", width=3, command=self._kl_del).pack(side=tk.LEFT)
-        ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(row2, text="Fach:").pack(side=tk.LEFT, padx=(5, 3))
+        kl_btn_frame = ttk.Frame(kf_frame)
+        kl_btn_frame.pack(fill=tk.X)
+        ttk.Button(kl_btn_frame, text="+", width=5, command=self._kl_add).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(kl_btn_frame, text="→", width=5, command=self._kl_uebertragen).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(kl_btn_frame, text="−", width=5, command=self._kl_del).pack(side=tk.LEFT)
+
+        ttk.Label(kf_frame, text="Fach:").pack(anchor="w", pady=(5, 0))
         self.fach_var = tk.StringVar()
-        self.fach_cb = ttk.Combobox(row2, textvariable=self.fach_var, state="readonly", width=14)
-        self.fach_cb.pack(side=tk.LEFT, padx=(0, 2))
+        self.fach_cb = ttk.Combobox(kf_frame, textvariable=self.fach_var, state="readonly", width=14)
+        self.fach_cb.pack(fill=tk.X, pady=(2, 2))
         self.fach_cb.bind("<<ComboboxSelected>>", self._on_fach)
-        ttk.Button(row2, text="+", width=3, command=self._fach_add).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(row2, text="−", width=3, command=self._fach_del).pack(side=tk.LEFT)
+        fach_btn_frame = ttk.Frame(kf_frame)
+        fach_btn_frame.pack(fill=tk.X)
+        ttk.Button(fach_btn_frame, text="+", width=5, command=self._fach_add).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(fach_btn_frame, text="−", width=5, command=self._fach_del).pack(side=tk.LEFT)
+
         # Schülerinnen
-        sf = ttk.LabelFrame(hf, text="Schülerinnen", padding=5)
-        sf.grid(row=1, column=0, sticky="nsew", padx=(0, 3))
-        self.sk_lb = tk.Listbox(sf, height=14, width=18, exportselection=False,
+        sf = ttk.LabelFrame(left_col, text="Schülerinnen", padding=5)
+        sf.pack(fill=tk.BOTH, expand=True)
+        self.sk_lb = tk.Listbox(sf, height=10, width=18, exportselection=False,
                                  font=("TkDefaultFont", 9), selectbackground="#4a90d9")
         self.sk_lb.pack(fill=tk.BOTH, expand=True)
         self.sk_lb.bind("<<ListboxSelect>>", self._on_sk)
@@ -491,17 +484,23 @@ class NotenVerwaltungApp:
         sl = sorted(self.daten.schuljahre.keys())
         self.sj_cb['values'] = sl
         if sl:
-            if self._sj() not in sl:
+            # Versuche das zuletzt gespeicherte Schuljahr zu verwenden
+            letztes_sj = self.daten.letztes_schuljahr
+            if letztes_sj and letztes_sj in sl:
+                self.sj_var.set(letztes_sj)
+            elif self._sj() not in sl:
                 self.sj_var.set(sl[0])
+            # Versuche das zuletzt gespeicherte Halbjahr zu verwenden
+            letztes_hj = self.daten.letztes_halbjahr
+            if letztes_hj and letztes_hj in HALBJAHRE:
+                self.hj_var.set(letztes_hj)
             self._refresh_kl()
-            self._update_einstellungen_lbl()
         else:
             self.sj_var.set("")
             self.kl_var.set("")
             self.kl_cb['values'] = []
             self._refresh_sk(None)
             self._refresh_noten(None, None)
-            self._update_einstellungen_lbl()
 
     def _refresh_kl(self) -> None:
         sj = self._sj()
@@ -791,50 +790,20 @@ class NotenVerwaltungApp:
         self.gw_sl.config(text=f"{gs}%")
         self.s_frame.config(text=f"Schriftliche Noten ({gs}%)")
 
-    # ---- Toggle Einstellungen ----
-    def _toggle_einstellungen(self, parent_frame, btn) -> None:
-        """Ein-/Ausklappen der Einstellungen."""
-        if self.einstellungen_ausgeklappt.get():
-            self.einstellungen_container.pack_forget()
-            btn.config(text="▶ Einstellungen")
-            self.einstellungen_ausgeklappt.set(False)
-        else:
-            self.einstellungen_container.pack(fill=tk.X)
-            btn.config(text="▼ Einstellungen")
-            self.einstellungen_ausgeklappt.set(True)
-
-    def _update_einstellungen_lbl(self) -> None:
-        """Aktualisiert das Label mit den aktuellen Einstellungen."""
-        sj = self.sj_var.get()
-        hj = self.hj_var.get()
-        kl = self.kl_var.get()
-        fach = self.fach_var.get()
-
-        parts = []
-        if sj:
-            parts.append(sj)
-        if hj:
-            parts.append(hj)
-        if kl:
-            parts.append(kl)
-        if fach:
-            parts.append(fach)
-
-        if parts:
-            self.einstellungen_lbl.config(text=" | ".join(parts))
-        else:
-            self.einstellungen_lbl.config(text="Keine Einstellungen")
-
     # ---- Events ----
     def _on_sj(self, e) -> None:
+        self.daten.set_letztes_schuljahr(self._sj())
         self._refresh_kl()
         self._refresh_fach(None)
         self._refresh_sk(None)
         self._refresh_noten(None, None)
         self._refresh_notenschluessel()
         self._refresh_klausuren()
-        self._update_einstellungen_lbl()
         self._refresh_ul()
+
+    def _on_hj(self, e=None) -> None:
+        self.daten.set_letztes_halbjahr(self._hj())
+        self._refresh_all()
 
     def _on_kl(self, e) -> None:
         self._refresh_fach(self._kl())
@@ -843,14 +812,12 @@ class NotenVerwaltungApp:
         self._refresh_notenschluessel()
         self._refresh_klausuren()
         self._refresh_ul()
-        self._update_einstellungen_lbl()
 
     def _on_fach(self, e) -> None:
         self._refresh_noten(self._kl(), self._sk())
         self._refresh_notenschluessel()
         self._refresh_klausuren()
         self._refresh_ul()
-        self._update_einstellungen_lbl()
 
     def _on_sk(self, e) -> None:
         self._refresh_noten(self._kl(), self._sk())

@@ -22,6 +22,8 @@ class NotenVerwaltung:
     def __init__(self) -> None:
         self.schuljahre: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.gewichtung_muendlich: int = DEFAULT_GEWICHTUNG
+        self.letztes_schuljahr: Optional[str] = None
+        self.letztes_halbjahr: Optional[str] = None
 
     # ---- Hilfsmethoden ----
     def _get_klasse(self, sj: str, k: str) -> Optional[Dict[str, Any]]:
@@ -54,6 +56,14 @@ class NotenVerwaltung:
     @property
     def schriftlich_prozent(self) -> int:
         return 100 - self.gewichtung_muendlich
+
+    def set_letztes_schuljahr(self, sj: Optional[str]) -> None:
+        """Speichert das letzte ausgewählte Schuljahr."""
+        self.letztes_schuljahr = sj
+
+    def set_letztes_halbjahr(self, hj: Optional[str]) -> None:
+        """Speichert das letzte ausgewählte Halbjahr."""
+        self.letztes_halbjahr = hj
 
     # ---- Notenschlüssel CSV ----
     @staticmethod
@@ -121,11 +131,16 @@ class NotenVerwaltung:
                     "schuelerinnen": sk_dict,
                     "faecher": faecher,
                 }
-        return {"gewichtung_muendlich": self.gewichtung_muendlich, "schuljahre": sj}
+        return {"gewichtung_muendlich": self.gewichtung_muendlich,
+                "letztes_schuljahr": self.letztes_schuljahr,
+                "letztes_halbjahr": self.letztes_halbjahr,
+                "schuljahre": sj}
 
     def from_dict(self, data: Dict[str, Any]) -> None:
         ns_aliases = _get_ns_aliases()
         self.gewichtung_muendlich = data.get("gewichtung_muendlich", DEFAULT_GEWICHTUNG)
+        self.letztes_schuljahr = data.get("letztes_schuljahr")
+        self.letztes_halbjahr = data.get("letztes_halbjahr")
         self.schuljahre = {}
         for s, klasses in data.get("schuljahre", {}).items():
             self.schuljahre[s] = {}
