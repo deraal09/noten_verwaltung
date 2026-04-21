@@ -446,7 +446,7 @@ class PunkteDialog(_CenteredToplevel):
         canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
         canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
         # Headers
-        headers = ["Schülerin"] + [f"A{i+1} (/{p})" for i, p in enumerate(max_punkte_pro_aufgabe)] + ["Gesamt", "%", "Note", "bis Note"]
+        headers = ["Schülerin"] + [f"A{i+1} (/{p})" for i, p in enumerate(max_punkte_pro_aufgabe)] + ["Gesamt", "%", "Note", "+ Pkt."]
         for c, h in enumerate(headers):
             ttk.Label(self.inner, text=h, font=("TkDefaultFont", 9, "bold")).grid(
                 row=0, column=c, padx=2, pady=2, sticky="w")
@@ -552,15 +552,15 @@ class PunkteDialog(_CenteredToplevel):
                     self.labels_note[r].config(foreground="black")
             else:
                 self.labels_note[r].config(foreground="black")
-            # Punkte bis zur nächsten Note berechnen
-            self._update_bis_note(r, ges, max_p, pct, note)
+            # Punkte bis zur nächsten Note berechnen (mit unrounded pct für Genauigkeit)
+            self._update_bis_note(r, ges, max_p, pct_raw, note)
         else:
             self.labels_ges[r].config(text="")
             self.labels_pct[r].config(text="")
             self.labels_note[r].config(text="")
             self.labels_bis_note[r].config(text="")
 
-    def _update_bis_note(self, r: int, ges: int, max_p: int, pct: int, current_note: Optional[float]) -> None:
+    def _update_bis_note(self, r: int, ges: int, max_p: int, pct: float, current_note: Optional[float]) -> None:
         """Berechnet und zeigt, wie viele Punkte bis zur nächsten Note fehlen."""
         entries = NotenVerwaltung.ns_csv_parse(self.ns_csv)
         if not entries:
@@ -569,35 +569,66 @@ class PunkteDialog(_CenteredToplevel):
 
         if self.ns_typ == "BG":
             # BG: bessere Note = höhere Note (größere Zahl)
-            next_note_pct = None
-            for p, n in entries:
-                if n > current_note:
-                    next_note_pct = p
+            # In BG: niedrigerer % = bessere Note
+            # Sortiere absteigend nach Prozent (100% zuerst)
+            sorted_entries = sorted(entries, key=lambda x: x[0], reverse=True)
+
+            # Finde den Schwellenwert der aktuellen Note
+            current_threshold_pct = None
+            for p, n in sorted_entries:
+                if abs(n - current_note) < 0.01:
+                    current_threshold_pct = p
                     break
-            if next_note_pct is None:
+
+            if current_threshold_pct is None:
+                self.labels_bis_note[r].config(text="")
+                return
+
+            # Finde den Index des aktuellen Schwellenwerts
+            current_idx = None
+            for i, (p, n) in enumerate(sorted_entries):
+                if p == current_threshold_pct:
+                    current_idx = i
+                    break
+
+            if current_idx is None or current_idx + 1 >= len(sorted_entries):
                 self.labels_bis_note[r].config(text="✓ beste")
                 return
+
+            # Nächster Eintrag hat niedrigeren Index in Liste = höheren %
+            next_note_pct, next_note_note = sorted_entries[current_idx + 1]
+
+            # Berechne fehlende Punkte (next_note_pct > current_threshold_pct)
+            pct_diff = next_note_pct - current_threshold_pct
         else:
-            # IHK: bessere Note = kleinere Note
+            # IHK: aufsteigend sortieren
+            sorted_entries = sorted(entries, key=lambda x: x[0])
+            # IHK: bessere Note = kleinere Note (niedrigere Zahl)
             next_note_pct = None
-            for p, n in entries:
+            next_note_note = None
+
+            for p, n in sorted_entries:
+                # Für IHK: suche die erste Note, die besser als current_note ist
                 if n < current_note:
                     next_note_pct = p
+                    next_note_note = n
                     break
+
             if next_note_pct is None:
                 self.labels_bis_note[r].config(text="✓ beste")
                 return
 
-        # Berechne die Differenz zwischen aktuellem und nächstem Prozent-Schwellenwert
-        # Nötige Punkte = (next_note_pct - pct) * max_p / 100
-        pct_diff = next_note_pct - pct
+            # Punkte bis zur nächsten Note
+            pct_diff = next_note_pct - pct
+
+        # Berechne fehlende Punkte (auf 0.5 gerundet)
         if pct_diff <= 0:
             note_str = str(int(current_note)) if current_note == int(current_note) else f"{current_note:.1f}"
             self.labels_bis_note[r].config(text="✓ " + note_str)
         else:
-            missing = round(pct_diff * max_p / 100, 1)
-            missing_int = int(missing + 0.5) if missing >= 1 else 1
-            next_note_str = str(int(next_note_pct)) if next_note_pct == int(next_note_pct) else f"{next_note_pct:.1f}"
+            missing = round(pct_diff * max_p / 100 * 2) / 2  # Auf 0.5er runden
+            missing_int = max(0.5, missing) if missing > 0 else 1
+            next_note_str = str(int(next_note_note)) if next_note_note == int(next_note_note) else f"{next_note_note:.1f}"
             self.labels_bis_note[r].config(text=f"+{missing_int} → {next_note_str}")
 
     def _update_all(self) -> None:

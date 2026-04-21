@@ -918,19 +918,20 @@ class NotenVerwaltung:
         if not entries:
             return None
 
-        # Nächste bessere Note finden
+        # Nächste bessere Note finden (aufsteigend nach Prozent sortieren)
+        sorted_entries = sorted(entries, key=lambda x: x[0])
         naechste_note = None
         naechste_pct = None
         if ns_typ == "BG":
             # BG: höhere Note ist besser
-            for p, n in entries:
+            for p, n in sorted_entries:
                 if n > gn:
                     naechste_note = n
                     naechste_pct = p
                     break
         else:
             # IHK: niedrigere Note ist besser
-            for p, n in entries:
+            for p, n in sorted_entries:
                 if n < gn:
                     naechste_note = n
                     naechste_pct = p
@@ -941,7 +942,7 @@ class NotenVerwaltung:
 
         # Aktuellen Prozent-Schwellenwert finden
         current_pct = None
-        for p, n in entries:
+        for p, n in sorted_entries:
             if abs(n - gn) < 0.01:
                 current_pct = p
                 break
@@ -954,10 +955,18 @@ class NotenVerwaltung:
         if pct_diff <= 0:
             return None
 
-        # Wir schätzen die fehlenden Punkte basierend auf einer typischen
-        # 100-Punkte-Referenz, da die Gewichtung variabel ist
-        punkte_pro_prozent = 100 / 100
-        fehlende = int(pct_diff * punkte_pro_prozent + 0.5)
+        # Fehlende Punkte basierend auf der tatsächlichen Gesamtpunktzahl
+        # aller Klausuren und Unterrichtsleistungen berechnen
+        max_punkte = 0
+        for ul in self.get_unterrichtsleistungen(sj, k, fach, hj):
+            max_punkte += sum(ul.get("max_punkte_pro_aufgabe", []))
+        for kl in self.get_klausuren(sj, k, fach, hj):
+            max_punkte += sum(kl.get("max_punkte_pro_aufgabe", []))
+
+        if max_punkte > 0:
+            fehlende = int(pct_diff * max_punkte / 100 + 0.5)
+        else:
+            fehlende = int(pct_diff + 0.5)
 
         # Mindestens 1 Punkt anzeigen wenn eine bessere Note möglich ist
         if fehlende == 0:
