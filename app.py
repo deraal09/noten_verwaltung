@@ -30,7 +30,7 @@ class NotenVerwaltungApp:
     def __init__(self, root: tk.Tk, password: str, data_file: Optional[str] = None):
         self.root = root
         self.root.title("Notenverwaltung")
-        self.root.geometry("960x720")
+        self.root.geometry("960x600")
         self.root.minsize(710, 435)
         self.password = password
         self.data_file = data_file or DEFAULT_DATA_FILE
@@ -97,30 +97,33 @@ class NotenVerwaltungApp:
         fm.add_command(label="Export CSV (Excel)...", command=self._export_csv)
         fm.add_separator()
         fm.add_command(label="Beenden", command=self.root.quit)
+        # Filter-Menü (umbenannt in "Schuljahr")
+        self.filter_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="▾ Schuljahr", menu=self.filter_menu)
+        self.filter_menu.add_command(label="Schuljahr: (bitte auswählen)", command=lambda: None, state="disabled")
+        self._sj_menu_var = tk.StringVar()
+        for sj in sorted(self.daten.schuljahre.keys()):
+            self.filter_menu.add_radiobutton(label=f"  {sj}", variable=self._sj_menu_var,
+                                              value=sj, command=self._on_sj_menu)
+        self.filter_menu.add_command(label="+ Neues Schuljahr...", command=self._sj_add_menu)
+        self.filter_menu.add_separator()
+        self.filter_menu.add_command(label="Halbjahr:", command=lambda: None, state="disabled")
+        self._hj_menu_var = tk.StringVar(value=HALBJAHRE[0])
+        for hj in HALBJAHRE:
+            self.filter_menu.add_radiobutton(label=f"  {hj}", variable=self._hj_menu_var,
+                                              value=hj, command=self._on_hj_menu)
         # Hauptframe
         hf = ttk.Frame(self.root, padding=10)
         hf.pack(fill=tk.BOTH, expand=True)
-        # Einstellungen
-        top = ttk.LabelFrame(hf, text="Einstellungen", padding=5)
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
 
-        # Schuljahr und Halbjahr
-        row1 = ttk.Frame(top)
-        row1.pack(fill=tk.X, pady=(0, 3))
-        ttk.Label(row1, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
+        # SJ/HJ Variablen
         self.sj_var = tk.StringVar()
-        self.sj_cb = ttk.Combobox(row1, textvariable=self.sj_var, state="readonly", width=12)
-        self.sj_cb.pack(side=tk.LEFT, padx=(0, 5))
-        self.sj_cb.bind("<<ComboboxSelected>>", self._on_sj)
-        ttk.Button(row1, text="+", width=3, command=self._sj_add).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(row1, text="−", width=3, command=self._sj_del).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(row1, text="Halbjahr:").pack(side=tk.LEFT, padx=(5, 3))
         self.hj_var = tk.StringVar()
-        self.hj_cb = ttk.Combobox(row1, textvariable=self.hj_var, state="readonly", width=12)
-        self.hj_cb.pack(side=tk.LEFT, padx=(0, 10))
-        self.hj_cb['values'] = HALBJAHRE
-        self.hj_cb.bind("<<ComboboxSelected>>", self._on_hj)
+
+        # SJ/HJ Anzeige (nur Text, Auswahl über Menü)
+        self._sj_hj_label = ttk.Label(hf, text="",
+                                       font=("TkDefaultFont", 10, "bold"))
+        self._sj_hj_label.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 5))
 
         # Linke Spalte: Klasse und Fach über Schülerinnen
         left_col = ttk.Frame(hf)
@@ -482,25 +485,54 @@ class NotenVerwaltungApp:
 
     def _refresh_sj(self) -> None:
         sl = sorted(self.daten.schuljahre.keys())
-        self.sj_cb['values'] = sl
+        # Aktualisiere Filter-Menü
+        self.filter_menu.delete(1, tk.END)
+        self.filter_menu.add_command(label="Schuljahr: (bitte auswählen)", command=lambda: None, state="disabled")
+        self._sj_menu_var = tk.StringVar()
+        for sj in sl:
+            self.filter_menu.add_radiobutton(label=f"  {sj}", variable=self._sj_menu_var,
+                                              value=sj, command=self._on_sj_menu)
+        self.filter_menu.add_command(label="+ Neues Schuljahr...", command=self._sj_add_menu)
+        self.filter_menu.add_separator()
+        self.filter_menu.add_command(label="Halbjahr:", command=lambda: None, state="disabled")
+        self._hj_menu_var = tk.StringVar(value=self.hj_var.get() or HALBJAHRE[0])
+        for hj in HALBJAHRE:
+            self.filter_menu.add_radiobutton(label=f"  {hj}", variable=self._hj_menu_var,
+                                              value=hj, command=self._on_hj_menu)
         if sl:
             # Versuche das zuletzt gespeicherte Schuljahr zu verwenden
             letztes_sj = self.daten.letztes_schuljahr
             if letztes_sj and letztes_sj in sl:
                 self.sj_var.set(letztes_sj)
+                self._sj_menu_var.set(letztes_sj)
             elif self._sj() not in sl:
                 self.sj_var.set(sl[0])
+                self._sj_menu_var.set(sl[0])
             # Versuche das zuletzt gespeicherte Halbjahr zu verwenden
             letztes_hj = self.daten.letztes_halbjahr
             if letztes_hj and letztes_hj in HALBJAHRE:
                 self.hj_var.set(letztes_hj)
+                self._hj_menu_var.set(letztes_hj)
+            self._update_sj_hj_label()
             self._refresh_kl()
         else:
             self.sj_var.set("")
             self.kl_var.set("")
             self.kl_cb['values'] = []
+            self._sj_hj_label.config(text="")
             self._refresh_sk(None)
             self._refresh_noten(None, None)
+
+    def _update_sj_hj_label(self) -> None:
+        """Aktualisiert die SJ/HJ-Anzeige."""
+        sj = self.sj_var.get()
+        hj = self.hj_var.get()
+        if sj and hj:
+            self._sj_hj_label.config(text=f"Schuljahr: {sj} | Halbjahr: {hj}")
+        elif sj:
+            self._sj_hj_label.config(text=f"Schuljahr: {sj}")
+        else:
+            self._sj_hj_label.config(text="")
 
     def _refresh_kl(self) -> None:
         sj = self._sj()
@@ -804,6 +836,58 @@ class NotenVerwaltungApp:
     def _on_hj(self, e=None) -> None:
         self.daten.set_letztes_halbjahr(self._hj())
         self._refresh_all()
+
+    def _on_sj_menu(self) -> None:
+        sj = self._sj_menu_var.get()
+        self.sj_var.set(sj)
+        self.daten.set_letztes_schuljahr(sj)
+        self._update_sj_hj_label()
+        self._refresh_kl()
+        self._refresh_fach(None)
+        self._refresh_sk(None)
+        self._refresh_noten(None, None)
+        self._refresh_notenschluessel()
+        self._refresh_klausuren()
+        self._refresh_ul()
+
+    def _on_hj_menu(self) -> None:
+        hj = self._hj_menu_var.get()
+        self.hj_var.set(hj)
+        self.daten.set_letztes_halbjahr(hj)
+        self._update_sj_hj_label()
+        self._refresh_all()
+
+    def _sj_add_menu(self) -> None:
+        """Öffnet Dialog zum Hinzufügen eines neuen Schuljahres."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Neues Schuljahr")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        ttk.Label(dlg, text="Bezeichnung (z.B. 2024/25):").pack(padx=10, pady=(10, 3))
+        entry = ttk.Entry(dlg, width=15)
+        entry.pack(padx=10, pady=(0, 10))
+        entry.focus()
+
+        def save():
+            name = entry.get().strip()
+            if not name:
+                messagebox.showwarning("Fehler", "Bitte eine Bezeichnung eingeben!", parent=dlg)
+                return
+            if name in self.daten.schuljahre:
+                messagebox.showwarning("Fehler", "Schuljahr existiert bereits!", parent=dlg)
+                return
+            self.daten.schuljahre[name] = {}
+            self.daten.letztes_schuljahr = name
+            self._save()
+            self._refresh_sj()
+            dlg.destroy()
+
+        btn_frame = ttk.Frame(dlg)
+        btn_frame.pack(pady=(0, 10))
+        ttk.Button(btn_frame, text="Speichern", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Abbrechen", command=dlg.destroy).pack(side=tk.LEFT)
+        dlg.bind("<Return>", lambda e: save())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     def _on_kl(self, e) -> None:
         self._refresh_fach(self._kl())

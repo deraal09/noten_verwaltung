@@ -933,45 +933,94 @@ class NotenVerwaltung:
         if not entries:
             return None
 
-        # Nächste bessere Note finden (aufsteigend nach Prozent sortieren)
-        sorted_entries = sorted(entries, key=lambda x: x[0])
-        naechste_note = None
-        naechste_pct = None
         if ns_typ == "BG":
-            # BG: höhere Note ist besser
-            for p, n in sorted_entries:
+            # BG: höhere Note ist besser, aber Noten können bei mehreren % gleich bleiben
+            # Erstelle reduzierten Schlüssel nur mit Notensprüngen
+            reduced = []
+            last_note = None
+            for p, n in sorted(entries, key=lambda x: x[0], reverse=True):
+                if n != last_note:
+                    reduced.append((p, n))
+                    last_note = n
+            reduced.sort(key=lambda x: x[0])  # Aufsteigend sortieren
+
+            # Finde aktuellen Schwellenwert
+            current_pct = None
+            for p, n in reduced:
+                if abs(n - gn) < 0.01:
+                    current_pct = p
+                    break
+
+            if current_pct is None:
+                return None
+
+            # Finde nächste bessere Note
+            naechste_note = None
+            naechste_pct = None
+            for p, n in reduced:
                 if n > gn:
                     naechste_note = n
                     naechste_pct = p
                     break
+
+            if naechste_note is None:
+                return None  # Bereits beste Note
+
+            # BG: höhere % = bessere Note
+            pct_diff = naechste_pct - current_pct
         else:
-            # IHK: niedrigere Note ist besser
+            # IHK: niedrigere Note ist besser, höhere % = bessere Note
+            sorted_entries = sorted(entries, key=lambda x: x[0])
+
+            # Aktuellen Prozent-Schwellenwert finden
+            current_pct = None
+            for p, n in sorted_entries:
+                if abs(n - gn) < 0.01:
+                    current_pct = p
+                    break
+
+            if current_pct is None:
+                return None
+
+            # Finde die nächste bessere Note
+            naechste_note = None
+            naechste_pct = None
             for p, n in sorted_entries:
                 if n < gn:
                     naechste_note = n
                     naechste_pct = p
                     break
 
-        if naechste_note is None:
-            return None  # Bereits beste Note
+            if naechste_note is None:
+                return None  # Bereits beste Note
 
-        # Aktuellen Prozent-Schwellenwert finden
-        current_pct = None
-        for p, n in sorted_entries:
-            if abs(n - gn) < 0.01:
-                current_pct = p
-                break
+            # IHK: Differenz basierend auf tatsächlichem Prozent
+            # Hole die tatsächlich erreichte Prozentzahl
+            sj_daten = self.schuljahre.get(sj, {}).get(k, {})
+            fach_daten = sj_daten.get("faecher", {}).get(fach, {})
+            hj_daten = fach_daten.get("halbjahre", {}).get(hj, {})
+            noten_daten = hj_daten.get("noten", {}).get(sk, {})
 
-        if current_pct is None:
-            return None
+            max_punkte = 0
+            aktuelle_punkte = 0
+            for ul in self.get_unterrichtsleistungen(sj, k, fach, hj):
+                max_punkte += sum(ul.get("max_punkte_pro_aufgabe", []))
+                ergebnisse = ul.get("ergebnisse", {}).get(sk, [])
+                if ergebnisse:
+                    aktuelle_punkte += sum(p for p in ergebnisse if p is not None)
+            for kl in self.get_klausuren(sj, k, fach, hj):
+                max_punkte += sum(kl.get("max_punkte_pro_aufgabe", []))
+                ergebnisse = kl.get("ergebnisse", {}).get(sk, [])
+                if ergebnisse:
+                    aktuelle_punkte += sum(p for p in ergebnisse if p is not None)
 
-        # Differenz zwischen Schwellenwerten berechnen
-        pct_diff = naechste_pct - current_pct
+            aktuelle_pct = aktuelle_punkte / max_punkte * 100 if max_punkte > 0 else 0
+            pct_diff = naechste_pct - aktuelle_pct
+
         if pct_diff <= 0:
             return None
 
         # Fehlende Punkte basierend auf der tatsächlichen Gesamtpunktzahl
-        # aller Klausuren und Unterrichtsleistungen berechnen
         max_punkte = 0
         for ul in self.get_unterrichtsleistungen(sj, k, fach, hj):
             max_punkte += sum(ul.get("max_punkte_pro_aufgabe", []))

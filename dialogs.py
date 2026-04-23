@@ -568,10 +568,45 @@ class PunkteDialog(_CenteredToplevel):
             return
 
         if self.ns_typ == "BG":
-            # BG: bessere Note = höhere Note (größere Zahl)
-            # In BG: niedrigerer % = bessere Note
-            # Sortiere absteigend nach Prozent (100% zuerst)
-            sorted_entries = sorted(entries, key=lambda x: x[0], reverse=True)
+            # BG: höhere Note ist besser, aber Noten können bei mehreren % gleich bleiben
+            # Erstelle reduzierten Schlüssel nur mit Notensprüngen
+            reduced = []
+            last_note = None
+            for p, n in sorted(entries, key=lambda x: x[0], reverse=True):
+                if n != last_note:
+                    reduced.append((p, n))
+                    last_note = n
+            reduced.sort(key=lambda x: x[0])  # Aufsteigend sortieren
+
+            # Finde aktuellen Schwellenwert
+            current_threshold_pct = None
+            for p, n in reduced:
+                if abs(n - current_note) < 0.01:
+                    current_threshold_pct = p
+                    break
+
+            if current_threshold_pct is None:
+                self.labels_bis_note[r].config(text="")
+                return
+
+            # Finde nächste bessere Note
+            next_note_pct = None
+            next_note_note = None
+            for p, n in reduced:
+                if n > current_note:
+                    next_note_pct = p
+                    next_note_note = n
+                    break
+
+            if next_note_pct is None:
+                self.labels_bis_note[r].config(text="✓ beste")
+                return
+
+            # BG: höhere % = bessere Note, also pct_diff = next - current
+            pct_diff = next_note_pct - current_threshold_pct
+        else:
+            # IHK: niedrigere Note ist besser, höhere % = bessere Note
+            sorted_entries = sorted(entries, key=lambda x: x[0])
 
             # Finde den Schwellenwert der aktuellen Note
             current_threshold_pct = None
@@ -584,31 +619,11 @@ class PunkteDialog(_CenteredToplevel):
                 self.labels_bis_note[r].config(text="")
                 return
 
-            # Finde den Index des aktuellen Schwellenwerts
-            current_idx = None
-            for i, (p, n) in enumerate(sorted_entries):
-                if p == current_threshold_pct:
-                    current_idx = i
-                    break
-
-            if current_idx is None or current_idx + 1 >= len(sorted_entries):
-                self.labels_bis_note[r].config(text="✓ beste")
-                return
-
-            # Nächster Eintrag hat niedrigeren Index in Liste = höheren %
-            next_note_pct, next_note_note = sorted_entries[current_idx + 1]
-
-            # Berechne fehlende Punkte (next_note_pct > current_threshold_pct)
-            pct_diff = next_note_pct - current_threshold_pct
-        else:
-            # IHK: aufsteigend sortieren
-            sorted_entries = sorted(entries, key=lambda x: x[0])
             # IHK: bessere Note = kleinere Note (niedrigere Zahl)
             next_note_pct = None
             next_note_note = None
 
             for p, n in sorted_entries:
-                # Für IHK: suche die erste Note, die besser als current_note ist
                 if n < current_note:
                     next_note_pct = p
                     next_note_note = n
@@ -618,7 +633,7 @@ class PunkteDialog(_CenteredToplevel):
                 self.labels_bis_note[r].config(text="✓ beste")
                 return
 
-            # Punkte bis zur nächsten Note
+            # IHK: pct_diff basierend auf tatsächlichem Prozent
             pct_diff = next_note_pct - pct
 
         # Berechne fehlende Punkte (auf 0.5 gerundet)
