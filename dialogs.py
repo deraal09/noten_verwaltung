@@ -224,7 +224,7 @@ class SchuelerlisteDialog(_CenteredToplevel):
         f.pack(fill=tk.BOTH, expand=True)
         ttk.Label(f, text="Schüler als Liste eingeben",
                   font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
-        ttk.Label(f, text="Format: Nachname, Vorname (eine Schülerin pro Zeile)",
+        ttk.Label(f, text="Format: Nachname, Vorname (durch Komma, Leerzeichen oder Tab getrennt)",
                   foreground="gray").pack(anchor="w", pady=(0, 10))
         self.text = tk.Text(f, height=15, width=50, font=("Courier", 10))
         self.text.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
@@ -254,6 +254,10 @@ class SchuelerlisteDialog(_CenteredToplevel):
                 vn = parts[1].strip() if len(parts) > 1 else ""
             elif "\t" in line:
                 parts = line.split("\t", 1)
+                nn = parts[0].strip()
+                vn = parts[1].strip() if len(parts) > 1 else ""
+            elif " " in line:
+                parts = line.split(" ", 1)
                 nn = parts[0].strip()
                 vn = parts[1].strip() if len(parts) > 1 else ""
             else:
@@ -455,6 +459,7 @@ class PunkteDialog(_CenteredToplevel):
         self.labels_pct = {}
         self.labels_note = {}
         self.labels_bis_note = {}
+        self.entry_grid = []  # Für Navigation mit Pfeiltasten
         for r, (sk, nn, vn) in enumerate(schuelerinnen, start=1):
             ttk.Label(self.inner, text=f"{nn}, {vn}").grid(row=r, column=0, sticky="w", padx=2, pady=1)
             row_entries = []
@@ -465,8 +470,10 @@ class PunkteDialog(_CenteredToplevel):
                 if c < len(existing) and existing[c] is not None:
                     e.insert(0, str(existing[c]))
                 e.bind("<KeyRelease>", lambda ev, row=r: self._update_row(row))
+                e.bind("<Key>", self._handle_entry_key)
                 row_entries.append(e)
             self.entries[sk] = row_entries
+            self.entry_grid.append(row_entries)
             lbl_g = ttk.Label(self.inner, text="", width=7)
             lbl_g.grid(row=r, column=self.num_cols + 1, padx=2)
             lbl_p = ttk.Label(self.inner, text="", width=7)
@@ -516,18 +523,84 @@ class PunkteDialog(_CenteredToplevel):
         sk = self.schuelerinnen[r - 1][0]
         pts = []
         for e in self.entries[sk]:
-            v = e.get().strip()
+            v = e.get().strip().replace(",", ".")  # Komma als Dezimaltrennzeichen akzeptieren
             if v == "":
                 pts.append(None)
             else:
                 try:
-                    pts.append(int(v))
+                    pts.append(float(v))
                 except ValueError:
-                    try:
-                        pts.append(float(v))
-                    except ValueError:
-                        pts.append(None)
+                    pts.append(None)
         return pts
+
+    def _handle_entry_key(self, event) -> str:
+        """Behandelt Navigation mit Pfeiltasten in den Eingabefeldern."""
+        if not self.entry_grid:
+            return
+
+        # Finde aktuelles Entry
+        current = event.widget
+        current_row = None
+        current_col = None
+        for r, row in enumerate(self.entry_grid):
+            for c, entry in enumerate(row):
+                if entry == current:
+                    current_row = r
+                    current_col = c
+                    break
+            if current_row is not None:
+                break
+
+        if current_row is None or current_col is None:
+            return
+
+        num_rows = len(self.entry_grid)
+        num_cols = len(self.entry_grid[0]) if num_rows > 0 else 0
+
+        new_row, new_col = current_row, current_col
+
+        if event.keysym == "Left":
+            new_col = max(0, current_col - 1)
+        elif event.keysym == "Right":
+            new_col = min(num_cols - 1, current_col + 1)
+        elif event.keysym == "Up":
+            new_row = max(0, current_row - 1)
+        elif event.keysym == "Down":
+            new_row = min(num_rows - 1, current_row + 1)
+        elif event.keysym == "Return" or event.keysym == "KP_Enter":
+            # Enter: nächste Zelle oder erste Zelle der nächsten Zeile
+            if current_col < num_cols - 1:
+                new_col = current_col + 1
+            elif current_row < num_rows - 1:
+                new_row = current_row + 1
+                new_col = 0
+            else:
+                # Letzte Zelle: OK-Button fokussieren
+                for child in self.pack_slaves():
+                    if isinstance(child, ttk.Frame):
+                        for btn in child.pack_slaves():
+                            if isinstance(btn, ttk.Button) and btn.cget("text") == "OK":
+                                btn.focus()
+                                return
+        elif event.keysym == "Tab":
+            # Tab: nächste Zelle
+            if current_col < num_cols - 1:
+                new_col = current_col + 1
+            elif current_row < num_rows - 1:
+                new_row = current_row + 1
+                new_col = 0
+            else:
+                return "break"  # Tab normal weiterleiten
+        else:
+            return  # Andere Tasten normal weiterleiten
+
+        if new_row != current_row or new_col != current_col:
+            new_entry = self.entry_grid[new_row][new_col]
+            new_entry.focus()
+            new_entry.select_range(0, tk.END)
+            return "break"
+
+        return
 
     def _update_row(self, r: int) -> None:
         pts = self._get_row_points(r)
