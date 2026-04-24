@@ -226,10 +226,10 @@ class SchuelerlisteDialog(_CenteredToplevel):
                   font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
         ttk.Label(f, text="Format: Nachname, Vorname (durch Komma, Leerzeichen oder Tab getrennt)",
                   foreground="gray").pack(anchor="w", pady=(0, 10))
-        self.text = tk.Text(f, height=15, width=50, font=("Courier", 10))
+        self.text = tk.Text(f, height=15, width=50, font=("Courier", 11))
         self.text.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
         ttk.Label(f, text="Tipp: Liste kann aus Excel/CSV kopiert werden",
-                  foreground="gray", font=("TkDefaultFont", 8)).pack(anchor="w")
+                  foreground="gray", font=("TkDefaultFont", 9)).pack(anchor="w")
         bf = ttk.Frame(f)
         bf.pack(fill=tk.X, pady=(15, 0))
         ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.RIGHT, padx=5)
@@ -452,7 +452,7 @@ class PunkteDialog(_CenteredToplevel):
         # Headers
         headers = ["Schülerin"] + [f"A{i+1} (/{p})" for i, p in enumerate(max_punkte_pro_aufgabe)] + ["Gesamt", "%", "Note", "+ Pkt."]
         for c, h in enumerate(headers):
-            ttk.Label(self.inner, text=h, font=("TkDefaultFont", 9, "bold")).grid(
+            ttk.Label(self.inner, text=h, font=("TkDefaultFont", 10, "bold")).grid(
                 row=0, column=c, padx=2, pady=2, sticky="w")
         self.entries = {}
         self.labels_ges = {}
@@ -478,7 +478,7 @@ class PunkteDialog(_CenteredToplevel):
             lbl_g.grid(row=r, column=self.num_cols + 1, padx=2)
             lbl_p = ttk.Label(self.inner, text="", width=7)
             lbl_p.grid(row=r, column=self.num_cols + 2, padx=2)
-            lbl_n = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 9, "bold"))
+            lbl_n = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 10, "bold"))
             lbl_n.grid(row=r, column=self.num_cols + 3, padx=2)
             lbl_bn = ttk.Label(self.inner, text="", width=8, foreground="#2a5da8")
             lbl_bn.grid(row=r, column=self.num_cols + 4, padx=2)
@@ -487,26 +487,26 @@ class PunkteDialog(_CenteredToplevel):
             self.labels_note[r] = lbl_n
             self.labels_bis_note[r] = lbl_bn
             self._update_row(r)
-        # Abstand vor "Unterm Strich"
+        # Abstand vor "Durchschnitt"
         ttk.Frame(self.inner, height=10).grid(row=len(schuelerinnen) + 1, column=0, pady=5)
-        # "Unterm Strich" Zeile
+        # "Durchschnitt" Zeile
         self.unter_strich_row = len(schuelerinnen) + 2
         ttk.Separator(self.inner, orient=tk.HORIZONTAL).grid(
             row=self.unter_strich_row, column=0, columnspan=self.num_cols + 5, sticky="ew", pady=(5, 5))
-        ttk.Label(self.inner, text="⸺ Unterm Strich:", font=("TkDefaultFont", 10, "bold")).grid(
+        ttk.Label(self.inner, text="⸺ Durchschnitt:", font=("TkDefaultFont", 11, "bold")).grid(
             row=self.unter_strich_row + 1, column=0, sticky="w", padx=2, pady=5)
         # Durchschnitt pro Aufgabe
         self.labels_avg_per_task = []
         for c in range(self.num_cols):
-            lbl = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 9, "bold"), foreground="#2a5da8")
+            lbl = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
             lbl.grid(row=self.unter_strich_row + 1, column=c + 1, padx=2)
             self.labels_avg_per_task.append(lbl)
         # Gesamt, %, Note unterm Strich
-        self.lbl_ul_ges = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
+        self.lbl_ul_ges = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 11, "bold"), foreground="#2a5da8")
         self.lbl_ul_ges.grid(row=self.unter_strich_row + 1, column=self.num_cols + 1, padx=2)
-        self.lbl_ul_pct = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
+        self.lbl_ul_pct = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 11, "bold"), foreground="#2a5da8")
         self.lbl_ul_pct.grid(row=self.unter_strich_row + 1, column=self.num_cols + 2, padx=2)
-        self.lbl_ul_note = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 11, "bold"), foreground="#c44")
+        self.lbl_ul_note = ttk.Label(self.inner, text="", width=10, font=("TkDefaultFont", 12, "bold"), foreground="#c44")
         self.lbl_ul_note.grid(row=self.unter_strich_row + 1, column=self.num_cols + 3, padx=2)
         # Leere Zelle für "bis Note" Spalte unterm Strich
         ttk.Label(self.inner, text="", width=8).grid(row=self.unter_strich_row + 1, column=self.num_cols + 4, padx=2)
@@ -725,7 +725,7 @@ class PunkteDialog(_CenteredToplevel):
         self._update_unter_strich()
 
     def _update_unter_strich(self) -> None:
-        """Berechnet und aktualisiert die 'Unterm Strich' Zeile mit Durchschnitten."""
+        """Berechnet und aktualisiert die 'Durchschnitt' Zeile mit Durchschnitten."""
         all_points_per_task = [[] for _ in range(self.num_cols)]
         all_total_points = []
         all_pcts = []
@@ -892,11 +892,11 @@ class NotenschluesselCsvDialog(_CenteredToplevel):
         for ns in NOTENSCHLUESSEL:
             ttk.Button(std_frame, text=f"{ns}",
                        command=lambda n=ns: self._load_default(n), width=8).pack(side=tk.LEFT, padx=2)
-        self.text = tk.Text(f, height=5, width=60, font=("Courier", 10))
+        self.text = tk.Text(f, height=5, width=60, font=("Courier", 11))
         self.text.pack(fill=tk.X, pady=(0, 5))
         self.text.insert("1.0", current_csv)
         ttk.Label(f, text="Vorschau:", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", pady=(5, 2))
-        self.preview = tk.Text(f, height=8, width=60, font=("Courier", 9),
+        self.preview = tk.Text(f, height=8, width=60, font=("Courier", 11),
                                state="disabled", background="#f0f0f0")
         self.preview.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         ttk.Button(f, text="Vorschau aktualisieren", command=self._update_preview).pack(anchor="w", pady=(0, 10))

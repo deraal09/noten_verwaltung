@@ -71,18 +71,18 @@ class NotenVerwaltungApp:
         gm = self.daten.gewichtung_muendlich
         gs = 100 - gm
         sty = ttk.Style()
-        sty.configure("TButton", font=("TkDefaultFont", 9), padding=(7, 4))
-        sty.configure("TLabel", font=("TkDefaultFont", 9))
-        sty.configure("TNotebook.Tab", font=("TkDefaultFont", 9, "bold"), padding=(14, 6))
-        sty.configure("H.TLabel", font=("TkDefaultFont", 10, "bold"))
-        sty.configure("G.TLabel", font=("TkDefaultFont", 11, "bold"))
-        sty.configure("J.TLabel", font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
-        sty.configure("I.TLabel", font=("TkDefaultFont", 8), foreground="gray")
-        sty.configure("NS.TLabel", font=("TkDefaultFont", 9, "bold"), foreground="#c44")
-        sty.configure("TLabelframe.Label", font=("TkDefaultFont", 9, "bold"))
-        sty.configure("TSpinbox", font=("TkDefaultFont", 9), padding=(3, 3))
-        sty.configure("Treeview", font=("TkDefaultFont", 9), rowheight=22)
-        sty.configure("Treeview.Heading", font=("TkDefaultFont", 8, "bold"))
+        sty.configure("TButton", font=("TkDefaultFont", 10), padding=(7, 4))
+        sty.configure("TLabel", font=("TkDefaultFont", 10))
+        sty.configure("TNotebook.Tab", font=("TkDefaultFont", 10, "bold"), padding=(14, 6))
+        sty.configure("H.TLabel", font=("TkDefaultFont", 11, "bold"))
+        sty.configure("G.TLabel", font=("TkDefaultFont", 12, "bold"))
+        sty.configure("J.TLabel", font=("TkDefaultFont", 11, "bold"), foreground="#2a5da8")
+        sty.configure("I.TLabel", font=("TkDefaultFont", 9), foreground="gray")
+        sty.configure("NS.TLabel", font=("TkDefaultFont", 10, "bold"), foreground="#c44")
+        sty.configure("TLabelframe.Label", font=("TkDefaultFont", 10, "bold"))
+        sty.configure("TSpinbox", font=("TkDefaultFont", 10), padding=(3, 3))
+        sty.configure("Treeview", font=("TkDefaultFont", 10), rowheight=24)
+        sty.configure("Treeview.Heading", font=("TkDefaultFont", 9, "bold"))
         # Menubar
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
@@ -157,7 +157,7 @@ class NotenVerwaltungApp:
         sf = ttk.LabelFrame(left_col, text="Schülerinnen", padding=5)
         sf.pack(fill=tk.BOTH, expand=True)
         self.sk_lb = tk.Listbox(sf, height=10, width=18, exportselection=False,
-                                 font=("TkDefaultFont", 9), selectbackground="#4a90d9")
+                                 font=("TkDefaultFont", 10), selectbackground="#4a90d9")
         self.sk_lb.pack(fill=tk.BOTH, expand=True)
         self.sk_lb.bind("<<ListboxSelect>>", self._on_sk)
         bf2 = ttk.Frame(sf)
@@ -206,7 +206,7 @@ class NotenVerwaltungApp:
         self.gw_sl.pack(side=tk.LEFT)
         self.gw_sb.bind("<Return>", lambda e: self._on_gw())
         self.m_lb = tk.Listbox(self.m_frame, height=4, exportselection=False,
-                                font=("TkDefaultFont", 9), selectbackground="#4a90d9")
+                                font=("TkDefaultFont", 10), selectbackground="#4a90d9")
         self.m_lb.pack(fill=tk.BOTH, expand=True)
         mbf = ttk.Frame(self.m_frame)
         mbf.pack(fill=tk.X, pady=(5, 0))
@@ -224,7 +224,7 @@ class NotenVerwaltungApp:
         self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
         self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         self.s_lb = tk.Listbox(self.s_frame, height=4, exportselection=False,
-                                font=("TkDefaultFont", 9), selectbackground="#4a90d9")
+                                font=("TkDefaultFont", 10), selectbackground="#4a90d9")
         self.s_lb.pack(fill=tk.BOTH, expand=True)
         sbf = ttk.Frame(self.s_frame)
         sbf.pack(fill=tk.X, pady=(5, 0))
@@ -251,7 +251,7 @@ class NotenVerwaltungApp:
         """Generischer Aufbau für Klausuren/UL-Tabs. Gibt (listbox, btn_frame, tree) zurück."""
         ttk.Label(parent_frame, text=f"{title}:", style="H.TLabel").pack(anchor="w", pady=(0, 5))
         lb = tk.Listbox(parent_frame, height=4, exportselection=False,
-                         font=("TkDefaultFont", 9), selectbackground="#4a90d9")
+                         font=("TkDefaultFont", 10), selectbackground="#4a90d9")
         lb.pack(fill=tk.X, pady=(0, 5))
         btn_frame = ttk.Frame(parent_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 5))
