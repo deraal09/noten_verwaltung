@@ -21,6 +21,45 @@ from dialogs import (
 logger = logging.getLogger(__name__)
 
 
+# Farbverlauf basierend auf Note (1=grün, 6=rot) - blass
+_NOTE_COLORS = {
+    0: "#ffcccc",  # hellrot
+    1: "#ffbbbb",  # hellrot
+    2: "#ffaaaa",  # hellrot
+    3: "#ff9999",  # hellrot
+    4: "#ffcc99",  # orange
+    5: "#ffbb88",  # orange
+    6: "#ffaa77",  # orange
+    7: "#ffffcc",  # gelb
+    8: "#ffffaa",  # gelb
+    9: "#ffff88",  # gelb
+    10: "#ddffaa",  # hellgrün
+    11: "#ccff99",  # hellgrün
+    12: "#bbff88",  # hellgrün
+    13: "#aaffaa",  # grün
+    14: "#99ff99",  # grün
+    15: "#88ff88",  # grün
+}
+
+
+def _note_to_color(note: float, ns_typ: str = "IHK") -> str:
+    """Gibt die Farbe basierend auf der Note zurück.
+    Für IHK: 1.0-6.0, für BG: 0-15.
+    Beste Note = grün, schlechteste Note = rot."""
+    try:
+        n = float(note)
+        if ns_typ == "BG":
+            # BG: 15=beste Note, 0=schlechteste
+            bg_note = max(0, min(15, int(round(n))))
+        else:
+            # IHK: 1=beste Note, 6=schlechteste
+            # Konvertiere zu BG-Skala: 6->0, 1->15
+            bg_note = max(0, min(15, int(round((6.0 - n) * 3))))
+    except (ValueError, TypeError):
+        return ""
+    return _NOTE_COLORS.get(bg_note, "")
+
+
 # ---------------------------------------------------------------------------
 # Hauptanwendung
 # ---------------------------------------------------------------------------
@@ -791,7 +830,9 @@ class NotenVerwaltungApp:
                     tree.heading("note", text="Note")
                     tree.column("note", width=55, anchor="center")
                     csv_str = self.daten.get_ns_csv(sj, kl_name)
+                    ns_typ = self.daten.get_notenschluessel(sj, kl_name)
                     ges_max = sum(max_p)
+                    used_colors: set = set()
                     for sk in self.daten.schuelerin_sortiert(sj, kl_name):
                         d = self.daten.get_schueler_dict(sj, kl_name)[sk]
                         vals = [f"{d['nachname']}, {d['vorname']}"]
@@ -808,9 +849,16 @@ class NotenVerwaltungApp:
                             n_str = (f"{note:.0f}" if note is not None and float(note).is_integer()
                                      else (f"{note:.1f}" if note is not None else "-"))
                             vals.append(n_str)
+                            color = _note_to_color(note, ns_typ) if note is not None else None
                         else:
                             vals.extend(["-", "-", "-"])
-                        tree.insert("", tk.END, values=vals)
+                            color = None
+                        iid = tree.insert("", tk.END, values=vals)
+                        if color:
+                            if color not in used_colors:
+                                tree.tag_configure(color, background=color)
+                                used_colors.add(color)
+                            tree.item(iid, tags=(color,))
             else:
                 tree["columns"] = ["info"]
                 tree.heading("info", text=f"Keine {label_name} vorhanden")

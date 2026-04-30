@@ -939,6 +939,21 @@ class NotenVerwaltung:
         if not entries:
             return None
 
+        # Berechne tatsächlich erreichte Punkte und Maximalpunkte
+        max_punkte = 0
+        aktuelle_punkte = 0
+        for ul in self.get_unterrichtsleistungen(sj, k, fach, hj):
+            max_punkte += sum(ul.get("max_punkte_pro_aufgabe", []))
+            ergebnisse = ul.get("ergebnisse", {}).get(sk, [])
+            if ergebnisse:
+                aktuelle_punkte += sum(p for p in ergebnisse if p is not None)
+        for kl in self.get_klausuren(sj, k, fach, hj):
+            max_punkte += sum(kl.get("max_punkte_pro_aufgabe", []))
+            ergebnisse = kl.get("ergebnisse", {}).get(sk, [])
+            if ergebnisse:
+                aktuelle_punkte += sum(p for p in ergebnisse if p is not None)
+        aktuelle_pct = aktuelle_punkte / max_punkte * 100 if max_punkte > 0 else 0
+
         if ns_typ == "BG":
             # BG: höhere Note ist besser, aber Noten können bei mehreren % gleich bleiben
             # Erstelle reduzierten Schlüssel nur mit Notensprüngen
@@ -950,13 +965,12 @@ class NotenVerwaltung:
                     last_note = n
             reduced.sort(key=lambda x: x[0])  # Aufsteigend sortieren
 
-            # Finde aktuellen Schwellenwert
+            # Finde aktuellen Schwellenwert (wo die aktuelle Note beginnt)
             current_pct = None
             for p, n in reduced:
                 if abs(n - gn) < 0.01:
                     current_pct = p
                     break
-
             if current_pct is None:
                 return None
 
@@ -972,21 +986,11 @@ class NotenVerwaltung:
             if naechste_note is None:
                 return None  # Bereits beste Note
 
-            # BG: höhere % = bessere Note
-            pct_diff = naechste_pct - current_pct
+            # BG: fehlende Punkte = nächster Schwellenwert - tatsächlich erreichte Punkte
+            pct_diff = naechste_pct - aktuelle_pct
         else:
             # IHK: niedrigere Note ist besser, höhere % = bessere Note
             sorted_entries = sorted(entries, key=lambda x: x[0])
-
-            # Aktuellen Prozent-Schwellenwert finden
-            current_pct = None
-            for p, n in sorted_entries:
-                if abs(n - gn) < 0.01:
-                    current_pct = p
-                    break
-
-            if current_pct is None:
-                return None
 
             # Finde die nächste bessere Note
             naechste_note = None
@@ -1000,27 +1004,7 @@ class NotenVerwaltung:
             if naechste_note is None:
                 return None  # Bereits beste Note
 
-            # IHK: Differenz basierend auf tatsächlichem Prozent
-            # Hole die tatsächlich erreichte Prozentzahl
-            sj_daten = self.schuljahre.get(sj, {}).get(k, {})
-            fach_daten = sj_daten.get("faecher", {}).get(fach, {})
-            hj_daten = fach_daten.get("halbjahre", {}).get(hj, {})
-            noten_daten = hj_daten.get("noten", {}).get(sk, {})
-
-            max_punkte = 0
-            aktuelle_punkte = 0
-            for ul in self.get_unterrichtsleistungen(sj, k, fach, hj):
-                max_punkte += sum(ul.get("max_punkte_pro_aufgabe", []))
-                ergebnisse = ul.get("ergebnisse", {}).get(sk, [])
-                if ergebnisse:
-                    aktuelle_punkte += sum(p for p in ergebnisse if p is not None)
-            for kl in self.get_klausuren(sj, k, fach, hj):
-                max_punkte += sum(kl.get("max_punkte_pro_aufgabe", []))
-                ergebnisse = kl.get("ergebnisse", {}).get(sk, [])
-                if ergebnisse:
-                    aktuelle_punkte += sum(p for p in ergebnisse if p is not None)
-
-            aktuelle_pct = aktuelle_punkte / max_punkte * 100 if max_punkte > 0 else 0
+            # IHK: fehlende Punkte = nächster Schwellenwert - tatsächlich erreichte Punkte
             pct_diff = naechste_pct - aktuelle_pct
 
         if pct_diff <= 0:

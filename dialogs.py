@@ -11,6 +11,40 @@ from constants import get_ns_aliases as _get_ns_aliases
 from models import NotenVerwaltung
 
 
+# Farbverlauf basierend auf Note (1=grün, 6=rot) - blass
+_DIALOG_NOTE_COLORS = {
+    0: "#ffcccc",  # hellrot
+    1: "#ffbbbb",  # hellrot
+    2: "#ffaaaa",  # hellrot
+    3: "#ff9999",  # hellrot
+    4: "#ffcc99",  # orange
+    5: "#ffbb88",  # orange
+    6: "#ffaa77",  # orange
+    7: "#ffffcc",  # gelb
+    8: "#ffffaa",  # gelb
+    9: "#ffff88",  # gelb
+    10: "#ddffaa",  # hellgrün
+    11: "#ccff99",  # hellgrün
+    12: "#bbff88",  # hellgrün
+    13: "#aaffaa",  # grün
+    14: "#99ff99",  # grün
+    15: "#88ff88",  # grün
+}
+
+
+def _dialog_note_to_color(note: float, ns_typ: str = "IHK") -> str:
+    """Gibt die Farbe basierend auf der Note zurück."""
+    try:
+        n = float(note)
+        if ns_typ == "BG":
+            bg_note = max(0, min(15, int(round(n))))
+        else:
+            bg_note = max(0, min(15, int(round((6.0 - n) * 3))))
+    except (ValueError, TypeError):
+        return ""
+    return _DIALOG_NOTE_COLORS.get(bg_note, "")
+
+
 # ---------------------------------------------------------------------------
 # Basis-Dialog
 # ---------------------------------------------------------------------------
@@ -474,13 +508,14 @@ class PunkteDialog(_CenteredToplevel):
                 row_entries.append(e)
             self.entries[sk] = row_entries
             self.entry_grid.append(row_entries)
-            lbl_g = ttk.Label(self.inner, text="", width=7)
+            # tk.Label für Hintergrundfarben
+            lbl_g = tk.Label(self.inner, text="", width=7, bg="white", relief=tk.SUNKEN)
             lbl_g.grid(row=r, column=self.num_cols + 1, padx=2)
-            lbl_p = ttk.Label(self.inner, text="", width=7)
+            lbl_p = tk.Label(self.inner, text="", width=7, bg="white", relief=tk.SUNKEN)
             lbl_p.grid(row=r, column=self.num_cols + 2, padx=2)
-            lbl_n = ttk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 10, "bold"))
+            lbl_n = tk.Label(self.inner, text="", width=7, font=("TkDefaultFont", 10, "bold"), bg="white", relief=tk.SUNKEN)
             lbl_n.grid(row=r, column=self.num_cols + 3, padx=2)
-            lbl_bn = ttk.Label(self.inner, text="", width=8, foreground="#2a5da8")
+            lbl_bn = tk.Label(self.inner, text="", width=8, bg="white", relief=tk.SUNKEN)
             lbl_bn.grid(row=r, column=self.num_cols + 4, padx=2)
             self.labels_ges[r] = lbl_g
             self.labels_pct[r] = lbl_p
@@ -665,13 +700,19 @@ class PunkteDialog(_CenteredToplevel):
                     self.labels_note[r].config(foreground="black")
             else:
                 self.labels_note[r].config(foreground="black")
+            # Farbe basierend auf Note setzen (Hintergrund der Ergebnis-Labels)
+            color = _dialog_note_to_color(note, self.ns_typ) if note is not None else "white"
+            self.labels_ges[r].config(bg=color)
+            self.labels_pct[r].config(bg=color)
+            self.labels_note[r].config(bg=color)
+            self.labels_bis_note[r].config(bg=color)
             # Punkte bis zur nächsten Note berechnen (mit unrounded pct für Genauigkeit)
             self._update_bis_note(r, ges, max_p, pct_raw, note)
         else:
-            self.labels_ges[r].config(text="")
-            self.labels_pct[r].config(text="")
-            self.labels_note[r].config(text="")
-            self.labels_bis_note[r].config(text="")
+            self.labels_ges[r].config(text="", bg="white")
+            self.labels_pct[r].config(text="", bg="white")
+            self.labels_note[r].config(text="", bg="white")
+            self.labels_bis_note[r].config(text="", bg="white")
 
     def _update_bis_note(self, r: int, ges: int, max_p: int, pct: float, current_note: Optional[float]) -> None:
         """Berechnet und zeigt, wie viele Punkte bis zur nächsten Note fehlen."""
@@ -680,84 +721,84 @@ class PunkteDialog(_CenteredToplevel):
             self.labels_bis_note[r].config(text="")
             return
 
+        # Erstelle reduzierte Liste: Note -> kleinster Schwellenwert
+        note_schwellen = {}
+        for p, n in entries:
+            if n not in note_schwellen:
+                note_schwellen[n] = p
+            else:
+                note_schwellen[n] = min(note_schwellen[n], p)
+
+        if not note_schwellen:
+            self.labels_bis_note[r].config(text="")
+            return
+
         if self.ns_typ == "BG":
-            # BG: höhere Note ist besser, aber Noten können bei mehreren % gleich bleiben
-            # Erstelle reduzierten Schlüssel nur mit Notensprüngen
-            reduced = []
-            last_note = None
-            for p, n in sorted(entries, key=lambda x: x[0], reverse=True):
-                if n != last_note:
-                    reduced.append((p, n))
-                    last_note = n
-            reduced.sort(key=lambda x: x[0])  # Aufsteigend sortieren
-
-            # Finde aktuellen Schwellenwert
-            current_threshold_pct = None
-            for p, n in reduced:
-                if abs(n - current_note) < 0.01:
-                    current_threshold_pct = p
+            # BG: größere Note = besser (15=beste, 0=schlechteste)
+            # Finde aktuelle Note mit unrounded prozent
+            aktuelle_note = None
+            for note, schwellen in sorted(note_schwellen.items(), key=lambda x: x[1], reverse=True):
+                if pct >= schwellen:
+                    aktuelle_note = note
                     break
 
-            if current_threshold_pct is None:
+            if aktuelle_note is None:
                 self.labels_bis_note[r].config(text="")
                 return
 
-            # Finde nächste bessere Note
-            next_note_pct = None
-            next_note_note = None
-            for p, n in reduced:
-                if n > current_note:
-                    next_note_pct = p
-                    next_note_note = n
+            # Finde nächste bessere Note (größere Note = besser)
+            naechste_note = None
+            for note in sorted(note_schwellen.keys(), key=float):
+                if note > aktuelle_note:
+                    naechste_note = note
                     break
 
-            if next_note_pct is None:
+            if naechste_note is None:
                 self.labels_bis_note[r].config(text="✓ beste")
                 return
 
-            # BG: höhere % = bessere Note, also pct_diff = next - current
-            pct_diff = next_note_pct - current_threshold_pct
+            naechste_pct = note_schwellen[naechste_note]
+
+            # Fehlende Punkte berechnen
+            pct_diff = naechste_pct - pct
         else:
-            # IHK: niedrigere Note ist besser, höhere % = bessere Note
-            sorted_entries = sorted(entries, key=lambda x: x[0])
-
-            # Finde den Schwellenwert der aktuellen Note
-            current_threshold_pct = None
-            for p, n in sorted_entries:
-                if abs(n - current_note) < 0.01:
-                    current_threshold_pct = p
+            # IHK: kleinere Note = besser (1=beste, 6=schlechteste)
+            # Finde aktuelle Note mit unrounded prozent
+            aktuelle_note = None
+            for note, schwellen in sorted(note_schwellen.items(), key=lambda x: x[1], reverse=True):
+                if pct >= schwellen:
+                    aktuelle_note = note
                     break
 
-            if current_threshold_pct is None:
+            if aktuelle_note is None:
                 self.labels_bis_note[r].config(text="")
                 return
 
-            # IHK: bessere Note = kleinere Note (niedrigere Zahl)
-            next_note_pct = None
-            next_note_note = None
-
-            for p, n in sorted_entries:
-                if n < current_note:
-                    next_note_pct = p
-                    next_note_note = n
+            # Finde nächste bessere Note (kleinere Note = besser)
+            naechste_note = None
+            for note in sorted(note_schwellen.keys(), key=float, reverse=True):
+                if note < aktuelle_note:
+                    naechste_note = note
                     break
 
-            if next_note_pct is None:
+            if naechste_note is None:
                 self.labels_bis_note[r].config(text="✓ beste")
                 return
 
-            # IHK: pct_diff basierend auf tatsächlichem Prozent
-            pct_diff = next_note_pct - pct
+            naechste_pct = note_schwellen[naechste_note]
+
+            # Fehlende Punkte berechnen
+            pct_diff = naechste_pct - pct
 
         # Berechne fehlende Punkte (auf 0.5 gerundet)
         if pct_diff <= 0:
-            note_str = str(int(current_note)) if current_note == int(current_note) else f"{current_note:.1f}"
+            note_str = str(int(aktuelle_note)) if aktuelle_note == int(aktuelle_note) else f"{aktuelle_note:.1f}"
             self.labels_bis_note[r].config(text="✓ " + note_str)
         else:
             missing = round(pct_diff * max_p / 100 * 2) / 2  # Auf 0.5er runden
-            missing_int = max(0.5, missing) if missing > 0 else 1
-            next_note_str = str(int(next_note_note)) if next_note_note == int(next_note_note) else f"{next_note_note:.1f}"
-            self.labels_bis_note[r].config(text=f"+{missing_int} → {next_note_str}")
+            missing = max(0.5, missing) if missing > 0 else 1
+            next_note_str = str(int(naechste_note)) if naechste_note == int(naechste_note) else f"{naechste_note:.1f}"
+            self.labels_bis_note[r].config(text=f"+{missing} → {next_note_str}")
 
     def _update_all(self) -> None:
         for r in range(1, len(self.schuelerinnen) + 1):
