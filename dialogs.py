@@ -519,17 +519,41 @@ class PunkteDialog(_CenteredToplevel):
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.wait_window()
 
+    def _eval_math(self, expr: str) -> Optional[float]:
+        """Berechnet einfache mathematische Ausdrücke sicher."""
+        expr = expr.strip().replace(",", ".")
+        if not expr:
+            return None
+        # Nur erlaubte Zeichen: Ziffern, Operatoren, Klammern, Leerzeichen, Punkt
+        allowed = set("0123456789+-*/.() ")
+        if not all(c in allowed for c in expr):
+            return None
+        # Keine potentiell gefährlichen Funktionen zulassen
+        dangerous = ("eval", "exec", "compile", "import", "os", "sys", "open", "__")
+        for d in dangerous:
+            if d in expr.lower():
+                return None
+        try:
+            result = eval(expr, {"__builtins__": {}}, {})
+            if isinstance(result, (int, float)):
+                return float(result)
+        except (SyntaxError, NameError, ZeroDivisionError, OverflowError):
+            pass
+        return None
+
     def _get_row_points(self, r: int) -> List[float]:
         sk = self.schuelerinnen[r - 1][0]
         pts = []
         for e in self.entries[sk]:
-            v = e.get().strip().replace(",", ".")  # Komma als Dezimaltrennzeichen akzeptieren
+            v = e.get().strip()
             if v == "":
                 pts.append(None)
             else:
-                try:
-                    pts.append(float(v))
-                except ValueError:
+                # Versuche zuerst einfache Zahl, dann Rechenausdruck
+                result = self._eval_math(v)
+                if result is not None:
+                    pts.append(result)
+                else:
                     pts.append(None)
         return pts
 
@@ -568,14 +592,22 @@ class PunkteDialog(_CenteredToplevel):
         elif event.keysym == "Down":
             new_row = min(num_rows - 1, current_row + 1)
         elif event.keysym == "Return" or event.keysym == "KP_Enter":
-            # Enter: nächste Zelle oder erste Zelle der nächsten Zeile
+            # Enter: Berechnung anzeigen und nächste Zelle
+            v = current.get().strip()
+            if v:
+                result = self._eval_math(v)
+                if result is not None:
+                    # Wert formatieren und anzeigen
+                    display = str(int(result)) if result == int(result) else f"{result:.1f}"
+                    current.delete(0, tk.END)
+                    current.insert(0, display)
+            self._update_row(current_row + 1)  # 1-basiert
             if current_col < num_cols - 1:
                 new_col = current_col + 1
             elif current_row < num_rows - 1:
                 new_row = current_row + 1
                 new_col = 0
             else:
-                # Letzte Zelle: OK-Button fokussieren
                 for child in self.pack_slaves():
                     if isinstance(child, ttk.Frame):
                         for btn in child.pack_slaves():
@@ -583,16 +615,24 @@ class PunkteDialog(_CenteredToplevel):
                                 btn.focus()
                                 return
         elif event.keysym == "Tab":
-            # Tab: nächste Zelle
+            # Tab: Berechnung anzeigen und nächste Zelle
+            v = current.get().strip()
+            if v:
+                result = self._eval_math(v)
+                if result is not None:
+                    display = str(int(result)) if result == int(result) else f"{result:.1f}"
+                    current.delete(0, tk.END)
+                    current.insert(0, display)
+            self._update_row(current_row + 1)
             if current_col < num_cols - 1:
                 new_col = current_col + 1
             elif current_row < num_rows - 1:
                 new_row = current_row + 1
                 new_col = 0
             else:
-                return "break"  # Tab normal weiterleiten
+                return "break"
         else:
-            return  # Andere Tasten normal weiterleiten
+            return
 
         if new_row != current_row or new_col != current_col:
             new_entry = self.entry_grid[new_row][new_col]
@@ -866,19 +906,72 @@ class _UebertragenDialog(_CenteredToplevel):
 
 
 # ---------------------------------------------------------------------------
+# Neuen Notenschlüssel hinzufügen Dialog
+# ---------------------------------------------------------------------------
+class NeuerNotenschluesselDialog(_CenteredToplevel):
+    """Dialog zum Hinzufügen eines neuen Notenschlüssel-Standards."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Neuen Notenschlüssel hinzufügen")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self.result = None
+        f = ttk.Frame(self, padding=15)
+        f.pack()
+        ttk.Label(f, text="Name:").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        self.e_name = ttk.Entry(f, width=20)
+        self.e_name.grid(row=0, column=1, pady=(0, 5), padx=(5, 0))
+        ttk.Label(f, text="Min. Note:").grid(row=1, column=0, sticky="w", pady=(0, 5))
+        self.e_min = ttk.Entry(f, width=10)
+        self.e_min.grid(row=1, column=1, sticky="w", pady=(0, 5), padx=(5, 0))
+        self.e_min.insert(0, "1")
+        ttk.Label(f, text="Max. Note:").grid(row=2, column=0, sticky="w", pady=(0, 5))
+        self.e_max = ttk.Entry(f, width=10)
+        self.e_max.grid(row=2, column=1, sticky="w", pady=(0, 5), padx=(5, 0))
+        self.e_max.insert(0, "6")
+        bf = ttk.Frame(f)
+        bf.grid(row=3, column=0, columnspan=2, pady=(15, 0))
+        ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bf, text="Abbrechen", command=self._cancel, width=10).pack(side=tk.RIGHT, padx=5)
+        self.e_name.focus_set()
+        self._center()
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.wait_window()
+
+    def _ok(self) -> None:
+        name = self.e_name.get().strip()
+        if not name:
+            messagebox.showwarning("Warnung", "Bitte einen Namen eingeben!", parent=self)
+            return
+        try:
+            min_note = int(self.e_min.get().strip())
+            max_note = int(self.e_max.get().strip())
+        except ValueError:
+            messagebox.showerror("Fehler", "Ungültige Notenwerte!", parent=self)
+            return
+        self.result = (name, min_note, max_note)
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.destroy()
+
+
+# ---------------------------------------------------------------------------
 # Notenschlüssel CSV Dialog
 # ---------------------------------------------------------------------------
 class NotenschluesselCsvDialog(_CenteredToplevel):
     """Dialog zum Bearbeiten des Notenschlüssel CSV."""
 
-    def __init__(self, parent, current_csv: str, notenschluessel_typ: str, alle_klassen: List[Tuple[str, str]]):
+    def __init__(self, parent, current_csv: str, notenschluessel_typ: str):
         super().__init__(parent)
         self.title("Notenschlüssel bearbeiten")
         self.resizable(True, True)
-        self.geometry("550x500")
+        self.geometry("500x450")
         self.transient(parent)
         self.grab_set()
-        self.alle_klassen = alle_klassen
         self.result = None
         f = ttk.Frame(self, padding=10)
         f.pack(fill=tk.BOTH, expand=True)
@@ -900,18 +993,6 @@ class NotenschluesselCsvDialog(_CenteredToplevel):
                                state="disabled", background="#f0f0f0")
         self.preview.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         ttk.Button(f, text="Vorschau aktualisieren", command=self._update_preview).pack(anchor="w", pady=(0, 10))
-        ttk.Label(f, text="Auf andere Klassen übertragen:",
-                  font=("TkDefaultFont", 10, "bold")).pack(anchor="w", pady=(5, 2))
-        self.transfer_vars = {}
-        if alle_klassen:
-            tf = ttk.Frame(f)
-            tf.pack(fill=tk.X, pady=(0, 5))
-            for sj, k in alle_klassen:
-                var = tk.BooleanVar(value=False)
-                self.transfer_vars[(sj, k)] = var
-                ttk.Checkbutton(tf, text=f"{k} ({sj})", variable=var).pack(anchor="w")
-        else:
-            ttk.Label(f, text="(Keine anderen Klassen vorhanden)", foreground="gray").pack(anchor="w")
         bf = ttk.Frame(f)
         bf.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(bf, text="OK", command=self._ok, width=10).pack(side=tk.RIGHT, padx=5)
@@ -946,8 +1027,7 @@ class NotenschluesselCsvDialog(_CenteredToplevel):
         if not entries:
             messagebox.showwarning("Warnung", "Ungültiges Format!", parent=self)
             return
-        transfer = [(sj, k) for (sj, k), var in self.transfer_vars.items() if var.get()]
-        self.result = (csv_str, transfer)
+        self.result = csv_str
         self.destroy()
 
     def _cancel(self) -> None:

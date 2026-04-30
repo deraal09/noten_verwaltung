@@ -8,7 +8,7 @@ import os
 import logging
 from typing import Optional, Tuple
 
-from constants import HALBJAHRE, AUTO_SAVE_MS, MSG_WAEHLEN_SJ_KL, MSG_WAEHLEN_SJ_KL_FACH, MSG_WAEHLEN_KL_FACH_SK, MSG_EXISTIERT_BEREITS
+from constants import HALBJAHRE, AUTO_SAVE_MS, MSG_WAEHLEN_SJ_KL, MSG_WAEHLEN_SJ_KL_FACH, MSG_WAEHLEN_KL_FACH_SK, MSG_EXISTIERT_BEREITS, NOTENSCHLUESSEL, DEFAULT_NS_CSV
 from constants import get_ns_aliases as _get_ns_aliases
 from constants import DATA_FILE as DEFAULT_DATA_FILE
 from models import NotenVerwaltung
@@ -283,10 +283,12 @@ class NotenVerwaltungApp:
         # Buttons zum Laden der Standards
         btn_frame = ttk.Frame(nf)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Button(btn_frame, text="IHK-Standard laden",
-                   command=self._ns_load_ihk).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="BG-Standard laden",
-                   command=self._ns_load_bg).pack(side=tk.LEFT, padx=(0, 5))
+        self._ns_std_var = tk.StringVar(value="Standard laden")
+        self.ns_std_menu = ttk.Menubutton(btn_frame, textvariable=self._ns_std_var, style="TMenubutton", width=15)
+        self._ns_std_menu_ref = std_menu = tk.Menu(self.ns_std_menu, tearoff=0)
+        self.ns_std_menu["menu"] = std_menu
+        self.ns_std_menu.pack(side=tk.LEFT, padx=(0, 5))
+        self._refresh_ns_menu()
         ttk.Button(btn_frame, text="Bearbeiten",
                    command=self._ns_edit).pack(side=tk.LEFT)
 
@@ -312,21 +314,17 @@ class NotenVerwaltungApp:
         self._ns_current_csv = ""
         self._ns_current_kl = None
 
-    def _ns_load_ihk(self) -> None:
-        """Lädt den IHK-Standard-Notenschlüssel."""
-        sj = self._sj()
-        kl = self._kl()
-        if not sj or not kl:
-            messagebox.showwarning("Warnung", "Bitte Schuljahr und Klasse auswählen!")
-            return
-        kl_name = self._parse_kl_name(kl)
-        from constants import DEFAULT_NS_CSV
-        self.daten.set_ns_csv(sj, kl_name, DEFAULT_NS_CSV["IHK"])
-        self._save()
-        self._refresh_notenschluessel()
+    def _refresh_ns_menu(self) -> None:
+        """Aktualisiert das Dropdown-Menü mit allen verfügbaren Notenschlüsseln."""
+        self._ns_std_menu_ref.delete(0, tk.END)
+        for ns in NOTENSCHLUESSEL:
+            self._ns_std_menu_ref.add_command(
+                label=f"{ns} ({NOTENSCHLUESSEL[ns][0]}-{NOTENSCHLUESSEL[ns][1]})",
+                command=lambda n=ns: self._ns_load_standard(n)
+            )
 
-    def _ns_load_bg(self) -> None:
-        """Lädt den BG-Standard-Notenschlüssel."""
+    def _ns_load_standard(self, name: str) -> None:
+        """Lädt einen Standard-Notenschlüssel nach Namen."""
         sj = self._sj()
         kl = self._kl()
         if not sj or not kl:
@@ -334,9 +332,22 @@ class NotenVerwaltungApp:
             return
         kl_name = self._parse_kl_name(kl)
         from constants import DEFAULT_NS_CSV
-        self.daten.set_ns_csv(sj, kl_name, DEFAULT_NS_CSV["BG"])
-        self._save()
-        self._refresh_notenschluessel()
+        if name in DEFAULT_NS_CSV:
+            self.daten.set_ns_csv(sj, kl_name, DEFAULT_NS_CSV[name])
+            self.daten.set_notenschluessel(sj, kl_name, name)
+            self._save()
+            self._refresh_notenschluessel()
+
+    def _update_ns_std_label(self) -> None:
+        """Aktualisiert das Label des Dropdown-Buttons mit dem aktuellen Notenschlüssel."""
+        sj = self._sj()
+        kl = self._kl()
+        if not sj or not kl:
+            self._ns_std_var.set("Standard laden")
+            return
+        kl_name = self._parse_kl_name(kl)
+        ns = self.daten.get_notenschluessel(sj, kl_name)
+        self._ns_std_var.set(ns)
 
     def _ns_edit(self) -> None:
         """Öffnet den Bearbeitungsdialog für den Notenschlüssel."""
@@ -348,15 +359,11 @@ class NotenVerwaltungApp:
         kl_name = self._parse_kl_name(kl)
         current_csv = self.daten.get_ns_csv(sj, kl_name)
         ns_typ = self.daten.get_notenschluessel(sj, kl_name)
-        alle_klassen = [(s, k) for s, klasses in self.daten.schuljahre.items()
-                        for k in klasses if not (s == sj and k == kl_name)]
-        dlg = NotenschluesselCsvDialog(self.root, current_csv, ns_typ, alle_klassen)
+        dlg = NotenschluesselCsvDialog(self.root, current_csv, ns_typ)
         if dlg.result is None:
             return
-        csv_str, transfer = dlg.result
+        csv_str = dlg.result
         self.daten.set_ns_csv(sj, kl_name, csv_str)
-        for s, k in transfer:
-            self.daten.set_ns_csv(s, k, csv_str)
         self._save()
         self._refresh_notenschluessel()
         self._refresh_klausuren()
@@ -595,6 +602,8 @@ class NotenVerwaltungApp:
         for p, n in entries:
             note_str = f"{n:.0f}" if n == int(n) else f"{n:.1f}"
             self.ns_tree.insert("", tk.END, values=(f"{p:.0f}%", note_str))
+
+        self._update_ns_std_label()
 
     def _refresh_notenschluessel_tab(self) -> None:
         """Aktualisiert die Notenschlüssel-Vorschau (Alias)."""

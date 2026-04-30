@@ -45,6 +45,12 @@ class NotenVerwaltung:
         ns_aliases = _get_ns_aliases()
         return ns_aliases.get(ns, ns)
 
+    def set_notenschluessel(self, sj: str, k: str, ns_typ: str) -> None:
+        """Setzt den Notenschlüssel-Typ für eine Klasse."""
+        kl = self._get_klasse(sj, k)
+        if kl:
+            kl["notenschluessel"] = ns_typ
+
     def get_notenbereich(self, sj: str, k: str) -> Tuple[int, int]:
         ns = self.get_notenschluessel(sj, k)
         return NOTENSCHLUESSEL.get(ns, (1, 6))
