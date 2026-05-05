@@ -8,7 +8,7 @@ import os
 import logging
 from typing import Optional, Tuple
 
-from constants import HALBJAHRE, AUTO_SAVE_MS, MSG_WAEHLEN_SJ_KL, MSG_WAEHLEN_SJ_KL_FACH, MSG_WAEHLEN_KL_FACH_SK, MSG_EXISTIERT_BEREITS
+from constants import HALBJAHRE, AUTO_SAVE_MS, MSG_WAEHLEN_SJ_KL, MSG_WAEHLEN_SJ_KL_FACH, MSG_WAEHLEN_KL_FACH_SK, MSG_EXISTIERT_BEREITS, NOTENSCHLUESSEL, DEFAULT_NS_CSV
 from constants import get_ns_aliases as _get_ns_aliases
 from constants import DATA_FILE as DEFAULT_DATA_FILE
 from models import NotenVerwaltung
@@ -21,6 +21,45 @@ from dialogs import (
 logger = logging.getLogger(__name__)
 
 
+# Farbverlauf basierend auf Note (1=grün, 6=rot) - blass
+_NOTE_COLORS = {
+    0: "#ffcccc",  # hellrot
+    1: "#ffbbbb",  # hellrot
+    2: "#ffaaaa",  # hellrot
+    3: "#ff9999",  # hellrot
+    4: "#ffcc99",  # orange
+    5: "#ffbb88",  # orange
+    6: "#ffaa77",  # orange
+    7: "#ffffcc",  # gelb
+    8: "#ffffaa",  # gelb
+    9: "#ffff88",  # gelb
+    10: "#ddffaa",  # hellgrün
+    11: "#ccff99",  # hellgrün
+    12: "#bbff88",  # hellgrün
+    13: "#aaffaa",  # grün
+    14: "#99ff99",  # grün
+    15: "#88ff88",  # grün
+}
+
+
+def _note_to_color(note: float, ns_typ: str = "IHK") -> str:
+    """Gibt die Farbe basierend auf der Note zurück.
+    Für IHK: 1.0-6.0, für BG: 0-15.
+    Beste Note = grün, schlechteste Note = rot."""
+    try:
+        n = float(note)
+        if ns_typ == "BG":
+            # BG: 15=beste Note, 0=schlechteste
+            bg_note = max(0, min(15, int(round(n))))
+        else:
+            # IHK: 1=beste Note, 6=schlechteste
+            # Konvertiere zu BG-Skala: 6->0, 1->15
+            bg_note = max(0, min(15, int(round((6.0 - n) * 3))))
+    except (ValueError, TypeError):
+        return ""
+    return _NOTE_COLORS.get(bg_note, "")
+
+
 # ---------------------------------------------------------------------------
 # Hauptanwendung
 # ---------------------------------------------------------------------------
@@ -30,12 +69,13 @@ class NotenVerwaltungApp:
     def __init__(self, root: tk.Tk, password: str, data_file: Optional[str] = None):
         self.root = root
         self.root.title("Notenverwaltung")
-        self.root.geometry("960x720")
+        self.root.geometry("960x600")
         self.root.minsize(710, 435)
         self.password = password
         self.data_file = data_file or DEFAULT_DATA_FILE
         self.daten = NotenVerwaltung()
         self._init_failed = False
+        self._after_id = None  # Für auto-save callback ID
         if os.path.exists(self.data_file):
             if not self.daten.laden_verschluesselt(self.password, self.data_file):
                 messagebox.showerror("Fehler", "Falsches Passwort oder beschädigte Daten!")
@@ -48,6 +88,16 @@ class NotenVerwaltungApp:
         self._refresh_sj()
         self._update_title()
         self._start_auto_save()
+        # Window-Close Handler: Cancel pending callbacks
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self) -> None:
+        """Behandelt das Schließen des Fensters korrekt."""
+        if self._after_id:
+            self.root.after_cancel(self._after_id)
+            self._after_id = None
+        self.root.quit()
+        self.root.destroy()
 
     def _save(self) -> None:
         self.daten.speichern_verschluesselt(self.password, self.data_file)
@@ -65,24 +115,24 @@ class NotenVerwaltungApp:
             self._save()
         except Exception as e:
             logger.error("Auto-Save fehlgeschlagen: %s", e)
-        self.root.after(AUTO_SAVE_MS, self._auto_save)
+        self._after_id = self.root.after(AUTO_SAVE_MS, self._auto_save)
 
     def _build_gui(self) -> None:
         gm = self.daten.gewichtung_muendlich
         gs = 100 - gm
         sty = ttk.Style()
-        sty.configure("TButton", font=("TkDefaultFont", 9), padding=(7, 4))
-        sty.configure("TLabel", font=("TkDefaultFont", 9))
-        sty.configure("TNotebook.Tab", font=("TkDefaultFont", 9, "bold"), padding=(14, 6))
-        sty.configure("H.TLabel", font=("TkDefaultFont", 10, "bold"))
-        sty.configure("G.TLabel", font=("TkDefaultFont", 11, "bold"))
-        sty.configure("J.TLabel", font=("TkDefaultFont", 10, "bold"), foreground="#2a5da8")
-        sty.configure("I.TLabel", font=("TkDefaultFont", 8), foreground="gray")
-        sty.configure("NS.TLabel", font=("TkDefaultFont", 9, "bold"), foreground="#c44")
-        sty.configure("TLabelframe.Label", font=("TkDefaultFont", 9, "bold"))
-        sty.configure("TSpinbox", font=("TkDefaultFont", 9), padding=(3, 3))
-        sty.configure("Treeview", font=("TkDefaultFont", 9), rowheight=22)
-        sty.configure("Treeview.Heading", font=("TkDefaultFont", 8, "bold"))
+        sty.configure("TButton", font=("TkDefaultFont", 10), padding=(7, 4))
+        sty.configure("TLabel", font=("TkDefaultFont", 10))
+        sty.configure("TNotebook.Tab", font=("TkDefaultFont", 10, "bold"), padding=(14, 6))
+        sty.configure("H.TLabel", font=("TkDefaultFont", 11, "bold"))
+        sty.configure("G.TLabel", font=("TkDefaultFont", 12, "bold"))
+        sty.configure("J.TLabel", font=("TkDefaultFont", 11, "bold"), foreground="#2a5da8")
+        sty.configure("I.TLabel", font=("TkDefaultFont", 9), foreground="gray")
+        sty.configure("NS.TLabel", font=("TkDefaultFont", 10, "bold"), foreground="#c44")
+        sty.configure("TLabelframe.Label", font=("TkDefaultFont", 10, "bold"))
+        sty.configure("TSpinbox", font=("TkDefaultFont", 10), padding=(3, 3))
+        sty.configure("Treeview", font=("TkDefaultFont", 10), rowheight=24)
+        sty.configure("Treeview.Heading", font=("TkDefaultFont", 9, "bold"))
         # Menubar
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
@@ -97,30 +147,33 @@ class NotenVerwaltungApp:
         fm.add_command(label="Export CSV (Excel)...", command=self._export_csv)
         fm.add_separator()
         fm.add_command(label="Beenden", command=self.root.quit)
+        # Filter-Menü (umbenannt in "Schuljahr")
+        self.filter_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="▾ Schuljahr", menu=self.filter_menu)
+        self.filter_menu.add_command(label="Schuljahr: (bitte auswählen)", command=lambda: None, state="disabled")
+        self._sj_menu_var = tk.StringVar()
+        for sj in sorted(self.daten.schuljahre.keys()):
+            self.filter_menu.add_radiobutton(label=f"  {sj}", variable=self._sj_menu_var,
+                                              value=sj, command=self._on_sj_menu)
+        self.filter_menu.add_command(label="+ Neues Schuljahr...", command=self._sj_add_menu)
+        self.filter_menu.add_separator()
+        self.filter_menu.add_command(label="Halbjahr:", command=lambda: None, state="disabled")
+        self._hj_menu_var = tk.StringVar(value=HALBJAHRE[0])
+        for hj in HALBJAHRE:
+            self.filter_menu.add_radiobutton(label=f"  {hj}", variable=self._hj_menu_var,
+                                              value=hj, command=self._on_hj_menu)
         # Hauptframe
         hf = ttk.Frame(self.root, padding=10)
         hf.pack(fill=tk.BOTH, expand=True)
-        # Einstellungen
-        top = ttk.LabelFrame(hf, text="Einstellungen", padding=5)
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
 
-        # Schuljahr und Halbjahr
-        row1 = ttk.Frame(top)
-        row1.pack(fill=tk.X, pady=(0, 3))
-        ttk.Label(row1, text="Schuljahr:").pack(side=tk.LEFT, padx=(0, 3))
+        # SJ/HJ Variablen
         self.sj_var = tk.StringVar()
-        self.sj_cb = ttk.Combobox(row1, textvariable=self.sj_var, state="readonly", width=12)
-        self.sj_cb.pack(side=tk.LEFT, padx=(0, 5))
-        self.sj_cb.bind("<<ComboboxSelected>>", self._on_sj)
-        ttk.Button(row1, text="+", width=3, command=self._sj_add).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(row1, text="−", width=3, command=self._sj_del).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Separator(row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(row1, text="Halbjahr:").pack(side=tk.LEFT, padx=(5, 3))
         self.hj_var = tk.StringVar()
-        self.hj_cb = ttk.Combobox(row1, textvariable=self.hj_var, state="readonly", width=12)
-        self.hj_cb.pack(side=tk.LEFT, padx=(0, 10))
-        self.hj_cb['values'] = HALBJAHRE
-        self.hj_cb.bind("<<ComboboxSelected>>", self._on_hj)
+
+        # SJ/HJ Anzeige (nur Text, Auswahl über Menü)
+        self._sj_hj_label = ttk.Label(hf, text="",
+                                       font=("TkDefaultFont", 10, "bold"))
+        self._sj_hj_label.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 5))
 
         # Linke Spalte: Klasse und Fach über Schülerinnen
         left_col = ttk.Frame(hf)
@@ -154,7 +207,7 @@ class NotenVerwaltungApp:
         sf = ttk.LabelFrame(left_col, text="Schülerinnen", padding=5)
         sf.pack(fill=tk.BOTH, expand=True)
         self.sk_lb = tk.Listbox(sf, height=10, width=18, exportselection=False,
-                                 font=("TkDefaultFont", 9), selectbackground="#4a90d9")
+                                 font=("TkDefaultFont", 10), selectbackground="#4a90d9")
         self.sk_lb.pack(fill=tk.BOTH, expand=True)
         self.sk_lb.bind("<<ListboxSelect>>", self._on_sk)
         bf2 = ttk.Frame(sf)
@@ -187,55 +240,33 @@ class NotenVerwaltungApp:
         self.info_lbl.pack(anchor="w", pady=(0, 2))
         self.ns_lbl = ttk.Label(nf, text="", style="NS.TLabel")
         self.ns_lbl.pack(anchor="w", pady=(0, 5))
-        self.m_frame = ttk.LabelFrame(nf, text="Unterrichtsleistung", padding=5)
-        self.m_frame.pack(fill=tk.BOTH, expand=True)
-        gw_bar = ttk.Frame(self.m_frame)
-        gw_bar.pack(fill=tk.X, pady=(0, 3))
-        ttk.Label(gw_bar, text="Gewichtung:").pack(side=tk.LEFT, padx=(0, 3))
+        gw_bar = ttk.Frame(nf)
+        gw_bar.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(gw_bar, text="Gewichtung Unterrichtsleistung:").pack(side=tk.LEFT, padx=(0, 3))
         self.gw_var = tk.StringVar(value=str(gm))
         self.gw_sb = ttk.Spinbox(gw_bar, from_=0, to=100, width=4, textvariable=self.gw_var,
                                   command=self._on_gw)
         self.gw_sb.pack(side=tk.LEFT, padx=(0, 2))
-        self.gw_ul_lbl = ttk.Label(gw_bar, text=f"{gm}%")
-        self.gw_ul_lbl.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(gw_bar, text="%").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(gw_bar, text="Schriftlich:").pack(side=tk.LEFT, padx=(0, 3))
         self.gw_sl = ttk.Label(gw_bar, text=f"{gs}%")
         self.gw_sl.pack(side=tk.LEFT)
         self.gw_sb.bind("<Return>", lambda e: self._on_gw())
-        self.m_lb = tk.Listbox(self.m_frame, height=4, exportselection=False,
-                                font=("TkDefaultFont", 9), selectbackground="#4a90d9")
-        self.m_lb.pack(fill=tk.BOTH, expand=True)
-        mbf = ttk.Frame(self.m_frame)
-        mbf.pack(fill=tk.X, pady=(5, 0))
-        self.m_sp = ttk.Spinbox(mbf, from_=1, to=6, width=5)
-        self.m_sp.pack(side=tk.LEFT, padx=(0, 5))
-        self.m_sp.set(1)
-        ttk.Button(mbf, text="Note eintragen",
-                   command=lambda: self._note_add("muendlich")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(mbf, text="Löschen",
-                   command=lambda: self._note_del("muendlich")).pack(side=tk.LEFT)
-        self.m_avg = ttk.Label(self.m_frame, text="")
-        self.m_avg.pack(anchor="w", pady=(0, 2))
-        self.m_count_lbl = ttk.Label(self.m_frame, text="", style="I.TLabel")
-        self.m_count_lbl.pack(anchor="w", pady=(0, 0))
-        self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
-        self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-        self.s_lb = tk.Listbox(self.s_frame, height=4, exportselection=False,
-                                font=("TkDefaultFont", 9), selectbackground="#4a90d9")
-        self.s_lb.pack(fill=tk.BOTH, expand=True)
-        sbf = ttk.Frame(self.s_frame)
-        sbf.pack(fill=tk.X, pady=(5, 0))
-        self.s_sp = ttk.Spinbox(sbf, from_=1, to=6, width=5)
-        self.s_sp.pack(side=tk.LEFT, padx=(0, 5))
-        self.s_sp.set(1)
-        ttk.Button(sbf, text="Note eintragen",
-                   command=lambda: self._note_add("schriftlich")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(sbf, text="Löschen",
-                   command=lambda: self._note_del("schriftlich")).pack(side=tk.LEFT)
-        self.s_avg = ttk.Label(self.s_frame, text="")
-        self.s_avg.pack(anchor="w", pady=(0, 2))
-        self.s_count_lbl = ttk.Label(self.s_frame, text="", style="I.TLabel")
-        self.s_count_lbl.pack(anchor="w", pady=(0, 0))
+        # Übersicht UL
+        self.ul_uebersicht = ttk.LabelFrame(nf, text="Unterrichtsleistungen", padding=5)
+        self.ul_uebersicht.pack(fill=tk.X, pady=(0, 5))
+        self.ul_details_lbl = ttk.Label(self.ul_uebersicht, text="(keine Unterrichtsleistungen)", style="I.TLabel")
+        self.ul_details_lbl.pack(anchor="w")
+        self.ul_gn_lbl = ttk.Label(self.ul_uebersicht, text="", style="G.TLabel")
+        self.ul_gn_lbl.pack(anchor="w", pady=(2, 0))
+        # Übersicht Klausuren
+        self.kl_uebersicht = ttk.LabelFrame(nf, text="Klausuren", padding=5)
+        self.kl_uebersicht.pack(fill=tk.X, pady=(0, 5))
+        self.kl_details_lbl = ttk.Label(self.kl_uebersicht, text="(keine Klausuren)", style="I.TLabel")
+        self.kl_details_lbl.pack(anchor="w")
+        self.kl_gn_lbl = ttk.Label(self.kl_uebersicht, text="", style="G.TLabel")
+        self.kl_gn_lbl.pack(anchor="w", pady=(2, 0))
+        # Gesamtnote
         self.g_lbl = ttk.Label(nf, text="Gesamtnote: -", style="G.TLabel")
         self.g_lbl.pack(anchor="w", pady=(10, 0))
         self.fp_lbl = ttk.Label(nf, text="", style="FP.TLabel")
@@ -248,7 +279,7 @@ class NotenVerwaltungApp:
         """Generischer Aufbau für Klausuren/UL-Tabs. Gibt (listbox, btn_frame, tree) zurück."""
         ttk.Label(parent_frame, text=f"{title}:", style="H.TLabel").pack(anchor="w", pady=(0, 5))
         lb = tk.Listbox(parent_frame, height=4, exportselection=False,
-                         font=("TkDefaultFont", 9), selectbackground="#4a90d9")
+                         font=("TkDefaultFont", 10), selectbackground="#4a90d9")
         lb.pack(fill=tk.X, pady=(0, 5))
         btn_frame = ttk.Frame(parent_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 5))
@@ -280,10 +311,12 @@ class NotenVerwaltungApp:
         # Buttons zum Laden der Standards
         btn_frame = ttk.Frame(nf)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Button(btn_frame, text="IHK-Standard laden",
-                   command=self._ns_load_ihk).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="BG-Standard laden",
-                   command=self._ns_load_bg).pack(side=tk.LEFT, padx=(0, 5))
+        self._ns_std_var = tk.StringVar(value="Standard laden")
+        self.ns_std_menu = ttk.Menubutton(btn_frame, textvariable=self._ns_std_var, style="TMenubutton", width=15)
+        self._ns_std_menu_ref = std_menu = tk.Menu(self.ns_std_menu, tearoff=0)
+        self.ns_std_menu["menu"] = std_menu
+        self.ns_std_menu.pack(side=tk.LEFT, padx=(0, 5))
+        self._refresh_ns_menu()
         ttk.Button(btn_frame, text="Bearbeiten",
                    command=self._ns_edit).pack(side=tk.LEFT)
 
@@ -309,21 +342,17 @@ class NotenVerwaltungApp:
         self._ns_current_csv = ""
         self._ns_current_kl = None
 
-    def _ns_load_ihk(self) -> None:
-        """Lädt den IHK-Standard-Notenschlüssel."""
-        sj = self._sj()
-        kl = self._kl()
-        if not sj or not kl:
-            messagebox.showwarning("Warnung", "Bitte Schuljahr und Klasse auswählen!")
-            return
-        kl_name = self._parse_kl_name(kl)
-        from constants import DEFAULT_NS_CSV
-        self.daten.set_ns_csv(sj, kl_name, DEFAULT_NS_CSV["IHK"])
-        self._save()
-        self._refresh_notenschluessel()
+    def _refresh_ns_menu(self) -> None:
+        """Aktualisiert das Dropdown-Menü mit allen verfügbaren Notenschlüsseln."""
+        self._ns_std_menu_ref.delete(0, tk.END)
+        for ns in NOTENSCHLUESSEL:
+            self._ns_std_menu_ref.add_command(
+                label=f"{ns} ({NOTENSCHLUESSEL[ns][0]}-{NOTENSCHLUESSEL[ns][1]})",
+                command=lambda n=ns: self._ns_load_standard(n)
+            )
 
-    def _ns_load_bg(self) -> None:
-        """Lädt den BG-Standard-Notenschlüssel."""
+    def _ns_load_standard(self, name: str) -> None:
+        """Lädt einen Standard-Notenschlüssel nach Namen."""
         sj = self._sj()
         kl = self._kl()
         if not sj or not kl:
@@ -331,9 +360,22 @@ class NotenVerwaltungApp:
             return
         kl_name = self._parse_kl_name(kl)
         from constants import DEFAULT_NS_CSV
-        self.daten.set_ns_csv(sj, kl_name, DEFAULT_NS_CSV["BG"])
-        self._save()
-        self._refresh_notenschluessel()
+        if name in DEFAULT_NS_CSV:
+            self.daten.set_ns_csv(sj, kl_name, DEFAULT_NS_CSV[name])
+            self.daten.set_notenschluessel(sj, kl_name, name)
+            self._save()
+            self._refresh_notenschluessel()
+
+    def _update_ns_std_label(self) -> None:
+        """Aktualisiert das Label des Dropdown-Buttons mit dem aktuellen Notenschlüssel."""
+        sj = self._sj()
+        kl = self._kl()
+        if not sj or not kl:
+            self._ns_std_var.set("Standard laden")
+            return
+        kl_name = self._parse_kl_name(kl)
+        ns = self.daten.get_notenschluessel(sj, kl_name)
+        self._ns_std_var.set(ns)
 
     def _ns_edit(self) -> None:
         """Öffnet den Bearbeitungsdialog für den Notenschlüssel."""
@@ -345,15 +387,11 @@ class NotenVerwaltungApp:
         kl_name = self._parse_kl_name(kl)
         current_csv = self.daten.get_ns_csv(sj, kl_name)
         ns_typ = self.daten.get_notenschluessel(sj, kl_name)
-        alle_klassen = [(s, k) for s, klasses in self.daten.schuljahre.items()
-                        for k in klasses if not (s == sj and k == kl_name)]
-        dlg = NotenschluesselCsvDialog(self.root, current_csv, ns_typ, alle_klassen)
+        dlg = NotenschluesselCsvDialog(self.root, current_csv, ns_typ)
         if dlg.result is None:
             return
-        csv_str, transfer = dlg.result
+        csv_str = dlg.result
         self.daten.set_ns_csv(sj, kl_name, csv_str)
-        for s, k in transfer:
-            self.daten.set_ns_csv(s, k, csv_str)
         self._save()
         self._refresh_notenschluessel()
         self._refresh_klausuren()
@@ -482,25 +520,54 @@ class NotenVerwaltungApp:
 
     def _refresh_sj(self) -> None:
         sl = sorted(self.daten.schuljahre.keys())
-        self.sj_cb['values'] = sl
+        # Aktualisiere Filter-Menü
+        self.filter_menu.delete(1, tk.END)
+        self.filter_menu.add_command(label="Schuljahr: (bitte auswählen)", command=lambda: None, state="disabled")
+        self._sj_menu_var = tk.StringVar()
+        for sj in sl:
+            self.filter_menu.add_radiobutton(label=f"  {sj}", variable=self._sj_menu_var,
+                                              value=sj, command=self._on_sj_menu)
+        self.filter_menu.add_command(label="+ Neues Schuljahr...", command=self._sj_add_menu)
+        self.filter_menu.add_separator()
+        self.filter_menu.add_command(label="Halbjahr:", command=lambda: None, state="disabled")
+        self._hj_menu_var = tk.StringVar(value=self.hj_var.get() or HALBJAHRE[0])
+        for hj in HALBJAHRE:
+            self.filter_menu.add_radiobutton(label=f"  {hj}", variable=self._hj_menu_var,
+                                              value=hj, command=self._on_hj_menu)
         if sl:
             # Versuche das zuletzt gespeicherte Schuljahr zu verwenden
             letztes_sj = self.daten.letztes_schuljahr
             if letztes_sj and letztes_sj in sl:
                 self.sj_var.set(letztes_sj)
+                self._sj_menu_var.set(letztes_sj)
             elif self._sj() not in sl:
                 self.sj_var.set(sl[0])
+                self._sj_menu_var.set(sl[0])
             # Versuche das zuletzt gespeicherte Halbjahr zu verwenden
             letztes_hj = self.daten.letztes_halbjahr
             if letztes_hj and letztes_hj in HALBJAHRE:
                 self.hj_var.set(letztes_hj)
+                self._hj_menu_var.set(letztes_hj)
+            self._update_sj_hj_label()
             self._refresh_kl()
         else:
             self.sj_var.set("")
             self.kl_var.set("")
             self.kl_cb['values'] = []
+            self._sj_hj_label.config(text="")
             self._refresh_sk(None)
             self._refresh_noten(None, None)
+
+    def _update_sj_hj_label(self) -> None:
+        """Aktualisiert die SJ/HJ-Anzeige."""
+        sj = self.sj_var.get()
+        hj = self.hj_var.get()
+        if sj and hj:
+            self._sj_hj_label.config(text=f"Schuljahr: {sj} | Halbjahr: {hj}")
+        elif sj:
+            self._sj_hj_label.config(text=f"Schuljahr: {sj}")
+        else:
+            self._sj_hj_label.config(text="")
 
     def _refresh_kl(self) -> None:
         sj = self._sj()
@@ -564,27 +631,29 @@ class NotenVerwaltungApp:
             note_str = f"{n:.0f}" if n == int(n) else f"{n:.1f}"
             self.ns_tree.insert("", tk.END, values=(f"{p:.0f}%", note_str))
 
+        self._update_ns_std_label()
+
     def _refresh_notenschluessel_tab(self) -> None:
         """Aktualisiert die Notenschlüssel-Vorschau (Alias)."""
         self._refresh_notenschluessel()
 
     def _refresh_noten(self, kl: Optional[str], sk: Optional[str]) -> None:
-        self.m_lb.delete(0, tk.END)
-        self.s_lb.delete(0, tk.END)
-        fach = self._fach()
-        if not kl or not sk or not fach:
+        self.g_lbl.config(text="Gesamtnote: -")
+        self.fp_lbl.config(text="")
+        self.j_lbl.config(text="Jahresnote: -")
+        self.ul_details_lbl.config(text="(keine Unterrichtsleistungen)")
+        self.ul_gn_lbl.config(text="")
+        self.kl_details_lbl.config(text="(keine Klausuren)")
+        self.kl_gn_lbl.config(text="")
+        if not kl or not sk:
             self.info_lbl.config(text="Bitte Klasse, Fach und Schülerin auswählen")
             self.ns_lbl.config(text="")
-            self.m_avg.config(text="")
-            self.m_count_lbl.config(text="")
-            self.s_avg.config(text="")
-            self.s_count_lbl.config(text="")
-            self.g_lbl.config(text="Gesamtnote: -")
-            self.j_lbl.config(text="Jahresnote: -")
-            self.fp_lbl.config(text="")
             return
         sj = self._sj()
         hj = self._hj()
+        fach = self._fach()
+        if not sj or not hj or not fach:
+            return
         kl_name = self._parse_kl_name(kl)
         sd = self.daten.get_schueler_dict(sj, kl_name)
         if sd is None or sk not in sd:
@@ -594,70 +663,53 @@ class NotenVerwaltungApp:
         nb = self.daten.get_notenbereich(sj, kl_name)
         self.info_lbl.config(text=f"{d['nachname']}, {d['vorname']} – {fach} ({kl_name}) — {hj}")
         self.ns_lbl.config(text=f"Notenschlüssel: {ns} (Noten {nb[0]}–{nb[1]})")
-        # UL
-        remaining_ul = self.daten.get_remaining_ul_pct(sj, kl_name, fach, hj)
-        muendlich = self.daten.get_muendlich(sj, kl_name, fach, sk, hj)
-        for i, n in enumerate(muendlich):
-            self.m_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        ul_notes_gw = self.daten.get_ul_noten_gewichtet(sj, kl_name, fach, sk, hj)
+
+        # Unterrichtsleistungen Übersicht
         uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
-        for i, (n, gw) in enumerate(ul_notes_gw):
-            uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
-            n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
-            self.m_lb.insert(tk.END, f"  UL: {uname} ({gw}%) → {n_str}")
-        ul_info_parts = []
-        if muendlich:
-            avg_m = sum(muendlich) / len(muendlich)
-            ul_info_parts.append(f"Manuell Ø {avg_m:.1f} ({remaining_ul:.0f}%)")
-        if ul_notes_gw:
-            for i, (n, gw) in enumerate(ul_notes_gw):
-                uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
-                ul_info_parts.append(f"{uname} ({gw}%)")
-        self.m_avg.config(text=" | ".join(ul_info_parts) if ul_info_parts else "")
-        # Anzahl UL-Noten anzeigen
-        ul_count = len(muendlich)
-        ul_bewertet_count = len(ul_notes_gw)
-        if ul_count > 0 or ul_bewertet_count > 0:
-            parts = []
+        ul_notes = []
+        ul_avg = 0.0
+        ul_count = 0
+        for i, ul in enumerate(uls):
+            note = self.daten.ul_note_berechnen(sj, kl_name, fach, hj, i, sk)
+            if note is not None:
+                n_str = f"{note:.0f}" if float(note).is_integer() else f"{note:.1f}"
+                ul_notes.append(f"{ul['name']} ({ul.get('gewichtung', 0)}%): {n_str}")
+                ul_avg += note
+                ul_count += 1
+        if ul_notes:
+            self.ul_details_lbl.config(text=" | ".join(ul_notes))
             if ul_count > 0:
-                parts.append(f"{ul_count} manuelle Note(n)")
-            if ul_bewertet_count > 0:
-                parts.append(f"{ul_bewertet_count} bewertete UL(s)")
-            self.m_count_lbl.config(text=f"Anzahl: {' | '.join(parts)}")
+                avg = ul_avg / ul_count
+                self.ul_gn_lbl.config(text=f"Ø UL: {avg:.2f}")
+            else:
+                self.ul_gn_lbl.config(text="")
         else:
-            self.m_count_lbl.config(text="Anzahl: 0")
-        # Schriftlich
-        remaining_schr = self.daten.get_remaining_schriftlich_pct(sj, kl_name, fach, hj)
-        schriftlich = self.daten.get_schriftlich(sj, kl_name, fach, sk, hj)
-        for i, n in enumerate(schriftlich):
-            self.s_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        kn_notes_gw = self.daten.get_klausur_noten_gewichtet(sj, kl_name, fach, sk, hj)
+            self.ul_details_lbl.config(text="(keine bewerteten Unterrichtsleistungen)")
+            self.ul_gn_lbl.config(text="")
+
+        # Klausuren Übersicht
         klausuren = self.daten.get_klausuren(sj, kl_name, fach, hj)
-        for i, (n, gw) in enumerate(kn_notes_gw):
-            kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
-            n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
-            self.s_lb.insert(tk.END, f"  K: {kname} ({gw}%) → {n_str}")
-        schr_info_parts = []
-        if schriftlich:
-            avg_s = sum(schriftlich) / len(schriftlich)
-            schr_info_parts.append(f"Manuell Ø {avg_s:.1f} ({remaining_schr:.0f}%)")
-        if kn_notes_gw:
-            for i, (n, gw) in enumerate(kn_notes_gw):
-                kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
-                schr_info_parts.append(f"{kname} ({gw}%)")
-        self.s_avg.config(text=" | ".join(schr_info_parts) if schr_info_parts else "")
-        # Anzahl schriftliche Noten anzeigen
-        schr_count = len(schriftlich)
-        klausur_count = len(kn_notes_gw)
-        if schr_count > 0 or klausur_count > 0:
-            parts = []
-            if schr_count > 0:
-                parts.append(f"{schr_count} manuelle Note(n)")
-            if klausur_count > 0:
-                parts.append(f"{klausur_count} Klausur(n)")
-            self.s_count_lbl.config(text=f"Anzahl: {' | '.join(parts)}")
+        kl_notes = []
+        kl_avg = 0.0
+        kl_count = 0
+        for i, kl in enumerate(klausuren):
+            note = self.daten.klausur_note_berechnen(sj, kl_name, fach, hj, i, sk)
+            if note is not None:
+                n_str = f"{note:.0f}" if float(note).is_integer() else f"{note:.1f}"
+                kl_notes.append(f"{kl['name']} ({kl.get('gewichtung', 0)}%): {n_str}")
+                kl_avg += note
+                kl_count += 1
+        if kl_notes:
+            self.kl_details_lbl.config(text=" | ".join(kl_notes))
+            if kl_count > 0:
+                avg = kl_avg / kl_count
+                self.kl_gn_lbl.config(text=f"Ø Klausuren: {avg:.2f}")
+            else:
+                self.kl_gn_lbl.config(text="")
         else:
-            self.s_count_lbl.config(text="Anzahl: 0")
+            self.kl_details_lbl.config(text="(keine bewerteten Klausuren)")
+            self.kl_gn_lbl.config(text="")
+
         gn = self.daten.gesamtnote_hj(sj, kl_name, fach, sk, hj)
         self.g_lbl.config(text=f"Gesamtnote ({hj}): {gn:.2f}" if gn is not None else f"Gesamtnote ({hj}): -")
         jn = self.daten.gesamtnote_jahr(sj, kl_name, fach, sk)
@@ -671,11 +723,6 @@ class NotenVerwaltungApp:
             self.fp_lbl.config(text=f"→ {fehlende} Pkt. bis Note {note_str}")
         else:
             self.fp_lbl.config(text="")
-
-        self.m_sp.config(from_=nb[0], to=nb[1])
-        self.m_sp.set(nb[0])
-        self.s_sp.config(from_=nb[0], to=nb[1])
-        self.s_sp.set(nb[0])
 
     def _refresh_bewertung(self, typ: str, keep_selection: Optional[int] = None) -> None:
         """Generischer Refresh für Klausuren- oder UL-Tab."""
@@ -750,7 +797,9 @@ class NotenVerwaltungApp:
                     tree.heading("note", text="Note")
                     tree.column("note", width=55, anchor="center")
                     csv_str = self.daten.get_ns_csv(sj, kl_name)
+                    ns_typ = self.daten.get_notenschluessel(sj, kl_name)
                     ges_max = sum(max_p)
+                    used_colors: set = set()
                     for sk in self.daten.schuelerin_sortiert(sj, kl_name):
                         d = self.daten.get_schueler_dict(sj, kl_name)[sk]
                         vals = [f"{d['nachname']}, {d['vorname']}"]
@@ -767,9 +816,16 @@ class NotenVerwaltungApp:
                             n_str = (f"{note:.0f}" if note is not None and float(note).is_integer()
                                      else (f"{note:.1f}" if note is not None else "-"))
                             vals.append(n_str)
+                            color = _note_to_color(note, ns_typ) if note is not None else None
                         else:
                             vals.extend(["-", "-", "-"])
-                        tree.insert("", tk.END, values=vals)
+                            color = None
+                        iid = tree.insert("", tk.END, values=vals)
+                        if color:
+                            if color not in used_colors:
+                                tree.tag_configure(color, background=color)
+                                used_colors.add(color)
+                            tree.item(iid, tags=(color,))
             else:
                 tree["columns"] = ["info"]
                 tree.heading("info", text=f"Keine {label_name} vorhanden")
@@ -804,6 +860,58 @@ class NotenVerwaltungApp:
     def _on_hj(self, e=None) -> None:
         self.daten.set_letztes_halbjahr(self._hj())
         self._refresh_all()
+
+    def _on_sj_menu(self) -> None:
+        sj = self._sj_menu_var.get()
+        self.sj_var.set(sj)
+        self.daten.set_letztes_schuljahr(sj)
+        self._update_sj_hj_label()
+        self._refresh_kl()
+        self._refresh_fach(None)
+        self._refresh_sk(None)
+        self._refresh_noten(None, None)
+        self._refresh_notenschluessel()
+        self._refresh_klausuren()
+        self._refresh_ul()
+
+    def _on_hj_menu(self) -> None:
+        hj = self._hj_menu_var.get()
+        self.hj_var.set(hj)
+        self.daten.set_letztes_halbjahr(hj)
+        self._update_sj_hj_label()
+        self._refresh_all()
+
+    def _sj_add_menu(self) -> None:
+        """Öffnet Dialog zum Hinzufügen eines neuen Schuljahres."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Neues Schuljahr")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        ttk.Label(dlg, text="Bezeichnung (z.B. 2024/25):").pack(padx=10, pady=(10, 3))
+        entry = ttk.Entry(dlg, width=15)
+        entry.pack(padx=10, pady=(0, 10))
+        entry.focus()
+
+        def save():
+            name = entry.get().strip()
+            if not name:
+                messagebox.showwarning("Fehler", "Bitte eine Bezeichnung eingeben!", parent=dlg)
+                return
+            if name in self.daten.schuljahre:
+                messagebox.showwarning("Fehler", "Schuljahr existiert bereits!", parent=dlg)
+                return
+            self.daten.schuljahre[name] = {}
+            self.daten.letztes_schuljahr = name
+            self._save()
+            self._refresh_sj()
+            dlg.destroy()
+
+        btn_frame = ttk.Frame(dlg)
+        btn_frame.pack(pady=(0, 10))
+        ttk.Button(btn_frame, text="Speichern", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Abbrechen", command=dlg.destroy).pack(side=tk.LEFT)
+        dlg.bind("<Return>", lambda e: save())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     def _on_kl(self, e) -> None:
         self._refresh_fach(self._kl())
@@ -1036,65 +1144,6 @@ class NotenVerwaltungApp:
         self._refresh_noten(None, None)
         self._refresh_klausuren()
         self._refresh_ul()
-
-    def _note_add(self, typ: str) -> None:
-        sj = self._sj()
-        hj = self._hj()
-        kl = self._kl()
-        sk = self._sk()
-        fach = self._fach()
-        if not sj or not kl or not sk or not fach:
-            messagebox.showwarning("Warnung", MSG_WAEHLEN_KL_FACH_SK)
-            return
-        kl_name = self._parse_kl_name(kl)
-        nb = self.daten.get_notenbereich(sj, kl_name)
-        sp = self.m_sp if typ == "muendlich" else self.s_sp
-        try:
-            note = int(sp.get())
-        except ValueError:
-            messagebox.showwarning("Warnung", f"Bitte eine gültige Note ({nb[0]}-{nb[1]}) eingeben!")
-            return
-        if not (nb[0] <= note <= nb[1]):
-            messagebox.showwarning("Warnung", f"Die Note muss zwischen {nb[0]} und {nb[1]} liegen!")
-            return
-        self.daten.note_hinzufuegen(sj, kl_name, fach, sk, hj, typ, note)
-        self._save()
-        self._refresh_noten(kl, sk)
-
-    def _note_del(self, typ: str) -> None:
-        sj = self._sj()
-        hj = self._hj()
-        kl = self._kl()
-        sk = self._sk()
-        fach = self._fach()
-        if not sj or not kl or not sk or not fach:
-            messagebox.showwarning("Warnung", MSG_WAEHLEN_KL_FACH_SK)
-            return
-        kl_name = self._parse_kl_name(kl)
-        lb = self.m_lb if typ == "muendlich" else self.s_lb
-        s = lb.curselection()
-        if not s:
-            messagebox.showwarning("Warnung", "Bitte eine Note zum Löschen auswählen!")
-            return
-        item_text = lb.get(s[0])
-        # Bewertete Noten können nur über ihren Tab gelöscht werden
-        if item_text.strip().startswith("UL:"):
-            messagebox.showinfo("Hinweis", "Bewertete Unterrichtsleistungen können nur über den Tab 'Unterrichtsleistungen' gelöscht werden.")
-            return
-        if item_text.strip().startswith("K:"):
-            messagebox.showinfo("Hinweis", "Klausurnoten können nur über den Tab 'Klausuren' gelöscht werden.")
-            return
-        if not messagebox.askyesno("Bestätigung", "Diese Note wirklich löschen?"):
-            return
-        # Zähle nur manuelle Noten bis zur ausgewählten Position
-        manual_count = 0
-        for i in range(s[0]):
-            txt = lb.get(i).strip()
-            if not txt.startswith(("K:", "UL:")):
-                manual_count += 1
-        self.daten.note_loeschen(sj, kl_name, fach, sk, hj, typ, manual_count)
-        self._save()
-        self._refresh_noten(kl, sk)
 
     # ---- Generische CRUD für Klausuren/UL ----
     def _bewertung_add(self, typ: str) -> None:
