@@ -888,14 +888,6 @@ class NotenVerwaltung:
                 total += note * (gw / 100)
                 has_any = True
 
-        # Manuelle UL-Noten
-        manual_ul = self.get_muendlich(sj, k, fach, sk, hj)
-        remaining_ul = self.get_remaining_ul_pct(sj, k, fach, hj)
-        if manual_ul and remaining_ul > 0:
-            avg = sum(manual_ul) / len(manual_ul)
-            total += avg * (remaining_ul / 100)
-            has_any = True
-
         # Bewertete Klausuren
         klausuren = self.get_klausuren(sj, k, fach, hj)
         for i, kl in enumerate(klausuren):
@@ -904,14 +896,6 @@ class NotenVerwaltung:
             if note is not None and gw > 0:
                 total += note * (gw / 100)
                 has_any = True
-
-        # Manuelle schriftliche Noten
-        manual_schr = self.get_schriftlich(sj, k, fach, sk, hj)
-        remaining_schr = self.get_remaining_schriftlich_pct(sj, k, fach, hj)
-        if manual_schr and remaining_schr > 0:
-            avg = sum(manual_schr) / len(manual_schr)
-            total += avg * (remaining_schr / 100)
-            has_any = True
 
         return round(total, 2) if has_any else None
 

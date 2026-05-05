@@ -504,6 +504,7 @@ class PunkteDialog(_CenteredToplevel):
                 if c < len(existing) and existing[c] is not None:
                     e.insert(0, str(existing[c]))
                 e.bind("<KeyRelease>", lambda ev, row=r: self._update_row(row))
+                e.bind("<FocusOut>", lambda ev, row=r: self._update_row(row))
                 e.bind("<Key>", self._handle_entry_key)
                 row_entries.append(e)
             self.entries[sk] = row_entries
@@ -679,13 +680,16 @@ class PunkteDialog(_CenteredToplevel):
 
     def _update_row(self, r: int) -> None:
         pts = self._get_row_points(r)
-        if all(p is not None for p in pts):
-            ges = sum(pts)
+        filled = [p for p in pts if p is not None]
+        if filled:
+            ges = sum(filled)
+            # Nur Maximalpunkte der ausgefüllten Aufgaben verwenden
+            max_p_filled = sum(self.max_punkte[i] for i, p in enumerate(pts) if p is not None)
             max_p = sum(self.max_punkte)
-            pct_raw = ges / max_p * 100 if max_p > 0 else 0
+            pct_raw = ges / max_p_filled * 100 if max_p_filled > 0 else 0
             pct = NotenVerwaltung._round_pct(pct_raw)
             note = NotenVerwaltung.ns_csv_lookup(pct, self.ns_csv)
-            self.labels_ges[r].config(text=f"{ges}/{max_p}")
+            self.labels_ges[r].config(text=f"{ges}/{max_p} ({max_p_filled} bewerte.)")
             self.labels_pct[r].config(text=f"{pct}%")
             note_str = (f"{note:.0f}" if note is not None and note == int(note)
                         else (f"{note:.1f}" if note is not None else "-"))
@@ -707,7 +711,7 @@ class PunkteDialog(_CenteredToplevel):
             self.labels_note[r].config(bg=color)
             self.labels_bis_note[r].config(bg=color)
             # Punkte bis zur nächsten Note berechnen (mit unrounded pct für Genauigkeit)
-            self._update_bis_note(r, ges, max_p, pct_raw, note)
+            self._update_bis_note(r, ges, max_p_filled, pct_raw, note)
         else:
             self.labels_ges[r].config(text="", bg="white")
             self.labels_pct[r].config(text="", bg="white")
@@ -813,15 +817,18 @@ class PunkteDialog(_CenteredToplevel):
 
         for r in range(1, len(self.schuelerinnen) + 1):
             pts = self._get_row_points(r)
-            if all(p is not None for p in pts):
+            filled = [p for p in pts if p is not None]
+            if filled:
                 for c, p in enumerate(pts):
-                    all_points_per_task[c].append(p)
-                ges = sum(pts)
+                    if p is not None:
+                        all_points_per_task[c].append(p)
+                ges = sum(filled)
+                max_p_filled = sum(self.max_punkte[i] for i, p in enumerate(pts) if p is not None)
                 all_total_points.append(ges)
-                max_p = sum(self.max_punkte)
-                pct_raw = ges / max_p * 100 if max_p > 0 else 0
-                pct = NotenVerwaltung._round_pct(pct_raw)
-                all_pcts.append(pct)
+                if max_p_filled > 0:
+                    pct_raw = ges / max_p_filled * 100
+                    pct = NotenVerwaltung._round_pct(pct_raw)
+                    all_pcts.append(pct)
 
         # Durchschnitt pro Aufgabe in Prozent
         for c in range(self.num_cols):

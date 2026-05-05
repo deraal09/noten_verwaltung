@@ -75,6 +75,7 @@ class NotenVerwaltungApp:
         self.data_file = data_file or DEFAULT_DATA_FILE
         self.daten = NotenVerwaltung()
         self._init_failed = False
+        self._after_id = None  # Für auto-save callback ID
         if os.path.exists(self.data_file):
             if not self.daten.laden_verschluesselt(self.password, self.data_file):
                 messagebox.showerror("Fehler", "Falsches Passwort oder beschädigte Daten!")
@@ -87,6 +88,16 @@ class NotenVerwaltungApp:
         self._refresh_sj()
         self._update_title()
         self._start_auto_save()
+        # Window-Close Handler: Cancel pending callbacks
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self) -> None:
+        """Behandelt das Schließen des Fensters korrekt."""
+        if self._after_id:
+            self.root.after_cancel(self._after_id)
+            self._after_id = None
+        self.root.quit()
+        self.root.destroy()
 
     def _save(self) -> None:
         self.daten.speichern_verschluesselt(self.password, self.data_file)
@@ -104,7 +115,7 @@ class NotenVerwaltungApp:
             self._save()
         except Exception as e:
             logger.error("Auto-Save fehlgeschlagen: %s", e)
-        self.root.after(AUTO_SAVE_MS, self._auto_save)
+        self._after_id = self.root.after(AUTO_SAVE_MS, self._auto_save)
 
     def _build_gui(self) -> None:
         gm = self.daten.gewichtung_muendlich
@@ -229,55 +240,33 @@ class NotenVerwaltungApp:
         self.info_lbl.pack(anchor="w", pady=(0, 2))
         self.ns_lbl = ttk.Label(nf, text="", style="NS.TLabel")
         self.ns_lbl.pack(anchor="w", pady=(0, 5))
-        self.m_frame = ttk.LabelFrame(nf, text="Unterrichtsleistung", padding=5)
-        self.m_frame.pack(fill=tk.BOTH, expand=True)
-        gw_bar = ttk.Frame(self.m_frame)
-        gw_bar.pack(fill=tk.X, pady=(0, 3))
-        ttk.Label(gw_bar, text="Gewichtung:").pack(side=tk.LEFT, padx=(0, 3))
+        gw_bar = ttk.Frame(nf)
+        gw_bar.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(gw_bar, text="Gewichtung Unterrichtsleistung:").pack(side=tk.LEFT, padx=(0, 3))
         self.gw_var = tk.StringVar(value=str(gm))
         self.gw_sb = ttk.Spinbox(gw_bar, from_=0, to=100, width=4, textvariable=self.gw_var,
                                   command=self._on_gw)
         self.gw_sb.pack(side=tk.LEFT, padx=(0, 2))
-        self.gw_ul_lbl = ttk.Label(gw_bar, text=f"{gm}%")
-        self.gw_ul_lbl.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(gw_bar, text="%").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(gw_bar, text="Schriftlich:").pack(side=tk.LEFT, padx=(0, 3))
         self.gw_sl = ttk.Label(gw_bar, text=f"{gs}%")
         self.gw_sl.pack(side=tk.LEFT)
         self.gw_sb.bind("<Return>", lambda e: self._on_gw())
-        self.m_lb = tk.Listbox(self.m_frame, height=4, exportselection=False,
-                                font=("TkDefaultFont", 10), selectbackground="#4a90d9")
-        self.m_lb.pack(fill=tk.BOTH, expand=True)
-        mbf = ttk.Frame(self.m_frame)
-        mbf.pack(fill=tk.X, pady=(5, 0))
-        self.m_sp = ttk.Spinbox(mbf, from_=1, to=6, width=5)
-        self.m_sp.pack(side=tk.LEFT, padx=(0, 5))
-        self.m_sp.set(1)
-        ttk.Button(mbf, text="Note eintragen",
-                   command=lambda: self._note_add("muendlich")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(mbf, text="Löschen",
-                   command=lambda: self._note_del("muendlich")).pack(side=tk.LEFT)
-        self.m_avg = ttk.Label(self.m_frame, text="")
-        self.m_avg.pack(anchor="w", pady=(0, 2))
-        self.m_count_lbl = ttk.Label(self.m_frame, text="", style="I.TLabel")
-        self.m_count_lbl.pack(anchor="w", pady=(0, 0))
-        self.s_frame = ttk.LabelFrame(nf, text=f"Schriftliche Noten ({gs}%)", padding=5)
-        self.s_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-        self.s_lb = tk.Listbox(self.s_frame, height=4, exportselection=False,
-                                font=("TkDefaultFont", 10), selectbackground="#4a90d9")
-        self.s_lb.pack(fill=tk.BOTH, expand=True)
-        sbf = ttk.Frame(self.s_frame)
-        sbf.pack(fill=tk.X, pady=(5, 0))
-        self.s_sp = ttk.Spinbox(sbf, from_=1, to=6, width=5)
-        self.s_sp.pack(side=tk.LEFT, padx=(0, 5))
-        self.s_sp.set(1)
-        ttk.Button(sbf, text="Note eintragen",
-                   command=lambda: self._note_add("schriftlich")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(sbf, text="Löschen",
-                   command=lambda: self._note_del("schriftlich")).pack(side=tk.LEFT)
-        self.s_avg = ttk.Label(self.s_frame, text="")
-        self.s_avg.pack(anchor="w", pady=(0, 2))
-        self.s_count_lbl = ttk.Label(self.s_frame, text="", style="I.TLabel")
-        self.s_count_lbl.pack(anchor="w", pady=(0, 0))
+        # Übersicht UL
+        self.ul_uebersicht = ttk.LabelFrame(nf, text="Unterrichtsleistungen", padding=5)
+        self.ul_uebersicht.pack(fill=tk.X, pady=(0, 5))
+        self.ul_details_lbl = ttk.Label(self.ul_uebersicht, text="(keine Unterrichtsleistungen)", style="I.TLabel")
+        self.ul_details_lbl.pack(anchor="w")
+        self.ul_gn_lbl = ttk.Label(self.ul_uebersicht, text="", style="G.TLabel")
+        self.ul_gn_lbl.pack(anchor="w", pady=(2, 0))
+        # Übersicht Klausuren
+        self.kl_uebersicht = ttk.LabelFrame(nf, text="Klausuren", padding=5)
+        self.kl_uebersicht.pack(fill=tk.X, pady=(0, 5))
+        self.kl_details_lbl = ttk.Label(self.kl_uebersicht, text="(keine Klausuren)", style="I.TLabel")
+        self.kl_details_lbl.pack(anchor="w")
+        self.kl_gn_lbl = ttk.Label(self.kl_uebersicht, text="", style="G.TLabel")
+        self.kl_gn_lbl.pack(anchor="w", pady=(2, 0))
+        # Gesamtnote
         self.g_lbl = ttk.Label(nf, text="Gesamtnote: -", style="G.TLabel")
         self.g_lbl.pack(anchor="w", pady=(10, 0))
         self.fp_lbl = ttk.Label(nf, text="", style="FP.TLabel")
@@ -649,22 +638,22 @@ class NotenVerwaltungApp:
         self._refresh_notenschluessel()
 
     def _refresh_noten(self, kl: Optional[str], sk: Optional[str]) -> None:
-        self.m_lb.delete(0, tk.END)
-        self.s_lb.delete(0, tk.END)
-        fach = self._fach()
-        if not kl or not sk or not fach:
+        self.g_lbl.config(text="Gesamtnote: -")
+        self.fp_lbl.config(text="")
+        self.j_lbl.config(text="Jahresnote: -")
+        self.ul_details_lbl.config(text="(keine Unterrichtsleistungen)")
+        self.ul_gn_lbl.config(text="")
+        self.kl_details_lbl.config(text="(keine Klausuren)")
+        self.kl_gn_lbl.config(text="")
+        if not kl or not sk:
             self.info_lbl.config(text="Bitte Klasse, Fach und Schülerin auswählen")
             self.ns_lbl.config(text="")
-            self.m_avg.config(text="")
-            self.m_count_lbl.config(text="")
-            self.s_avg.config(text="")
-            self.s_count_lbl.config(text="")
-            self.g_lbl.config(text="Gesamtnote: -")
-            self.j_lbl.config(text="Jahresnote: -")
-            self.fp_lbl.config(text="")
             return
         sj = self._sj()
         hj = self._hj()
+        fach = self._fach()
+        if not sj or not hj or not fach:
+            return
         kl_name = self._parse_kl_name(kl)
         sd = self.daten.get_schueler_dict(sj, kl_name)
         if sd is None or sk not in sd:
@@ -674,70 +663,53 @@ class NotenVerwaltungApp:
         nb = self.daten.get_notenbereich(sj, kl_name)
         self.info_lbl.config(text=f"{d['nachname']}, {d['vorname']} – {fach} ({kl_name}) — {hj}")
         self.ns_lbl.config(text=f"Notenschlüssel: {ns} (Noten {nb[0]}–{nb[1]})")
-        # UL
-        remaining_ul = self.daten.get_remaining_ul_pct(sj, kl_name, fach, hj)
-        muendlich = self.daten.get_muendlich(sj, kl_name, fach, sk, hj)
-        for i, n in enumerate(muendlich):
-            self.m_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        ul_notes_gw = self.daten.get_ul_noten_gewichtet(sj, kl_name, fach, sk, hj)
+
+        # Unterrichtsleistungen Übersicht
         uls = self.daten.get_unterrichtsleistungen(sj, kl_name, fach, hj)
-        for i, (n, gw) in enumerate(ul_notes_gw):
-            uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
-            n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
-            self.m_lb.insert(tk.END, f"  UL: {uname} ({gw}%) → {n_str}")
-        ul_info_parts = []
-        if muendlich:
-            avg_m = sum(muendlich) / len(muendlich)
-            ul_info_parts.append(f"Manuell Ø {avg_m:.1f} ({remaining_ul:.0f}%)")
-        if ul_notes_gw:
-            for i, (n, gw) in enumerate(ul_notes_gw):
-                uname = uls[i]["name"] if i < len(uls) else f"UL{i+1}"
-                ul_info_parts.append(f"{uname} ({gw}%)")
-        self.m_avg.config(text=" | ".join(ul_info_parts) if ul_info_parts else "")
-        # Anzahl UL-Noten anzeigen
-        ul_count = len(muendlich)
-        ul_bewertet_count = len(ul_notes_gw)
-        if ul_count > 0 or ul_bewertet_count > 0:
-            parts = []
+        ul_notes = []
+        ul_avg = 0.0
+        ul_count = 0
+        for i, ul in enumerate(uls):
+            note = self.daten.ul_note_berechnen(sj, kl_name, fach, hj, i, sk)
+            if note is not None:
+                n_str = f"{note:.0f}" if float(note).is_integer() else f"{note:.1f}"
+                ul_notes.append(f"{ul['name']} ({ul.get('gewichtung', 0)}%): {n_str}")
+                ul_avg += note
+                ul_count += 1
+        if ul_notes:
+            self.ul_details_lbl.config(text=" | ".join(ul_notes))
             if ul_count > 0:
-                parts.append(f"{ul_count} manuelle Note(n)")
-            if ul_bewertet_count > 0:
-                parts.append(f"{ul_bewertet_count} bewertete UL(s)")
-            self.m_count_lbl.config(text=f"Anzahl: {' | '.join(parts)}")
+                avg = ul_avg / ul_count
+                self.ul_gn_lbl.config(text=f"Ø UL: {avg:.2f}")
+            else:
+                self.ul_gn_lbl.config(text="")
         else:
-            self.m_count_lbl.config(text="Anzahl: 0")
-        # Schriftlich
-        remaining_schr = self.daten.get_remaining_schriftlich_pct(sj, kl_name, fach, hj)
-        schriftlich = self.daten.get_schriftlich(sj, kl_name, fach, sk, hj)
-        for i, n in enumerate(schriftlich):
-            self.s_lb.insert(tk.END, f"{i+1}. Note: {n}")
-        kn_notes_gw = self.daten.get_klausur_noten_gewichtet(sj, kl_name, fach, sk, hj)
+            self.ul_details_lbl.config(text="(keine bewerteten Unterrichtsleistungen)")
+            self.ul_gn_lbl.config(text="")
+
+        # Klausuren Übersicht
         klausuren = self.daten.get_klausuren(sj, kl_name, fach, hj)
-        for i, (n, gw) in enumerate(kn_notes_gw):
-            kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
-            n_str = f"{n:.0f}" if float(n).is_integer() else f"{n:.1f}"
-            self.s_lb.insert(tk.END, f"  K: {kname} ({gw}%) → {n_str}")
-        schr_info_parts = []
-        if schriftlich:
-            avg_s = sum(schriftlich) / len(schriftlich)
-            schr_info_parts.append(f"Manuell Ø {avg_s:.1f} ({remaining_schr:.0f}%)")
-        if kn_notes_gw:
-            for i, (n, gw) in enumerate(kn_notes_gw):
-                kname = klausuren[i]["name"] if i < len(klausuren) else f"K{i+1}"
-                schr_info_parts.append(f"{kname} ({gw}%)")
-        self.s_avg.config(text=" | ".join(schr_info_parts) if schr_info_parts else "")
-        # Anzahl schriftliche Noten anzeigen
-        schr_count = len(schriftlich)
-        klausur_count = len(kn_notes_gw)
-        if schr_count > 0 or klausur_count > 0:
-            parts = []
-            if schr_count > 0:
-                parts.append(f"{schr_count} manuelle Note(n)")
-            if klausur_count > 0:
-                parts.append(f"{klausur_count} Klausur(n)")
-            self.s_count_lbl.config(text=f"Anzahl: {' | '.join(parts)}")
+        kl_notes = []
+        kl_avg = 0.0
+        kl_count = 0
+        for i, kl in enumerate(klausuren):
+            note = self.daten.klausur_note_berechnen(sj, kl_name, fach, hj, i, sk)
+            if note is not None:
+                n_str = f"{note:.0f}" if float(note).is_integer() else f"{note:.1f}"
+                kl_notes.append(f"{kl['name']} ({kl.get('gewichtung', 0)}%): {n_str}")
+                kl_avg += note
+                kl_count += 1
+        if kl_notes:
+            self.kl_details_lbl.config(text=" | ".join(kl_notes))
+            if kl_count > 0:
+                avg = kl_avg / kl_count
+                self.kl_gn_lbl.config(text=f"Ø Klausuren: {avg:.2f}")
+            else:
+                self.kl_gn_lbl.config(text="")
         else:
-            self.s_count_lbl.config(text="Anzahl: 0")
+            self.kl_details_lbl.config(text="(keine bewerteten Klausuren)")
+            self.kl_gn_lbl.config(text="")
+
         gn = self.daten.gesamtnote_hj(sj, kl_name, fach, sk, hj)
         self.g_lbl.config(text=f"Gesamtnote ({hj}): {gn:.2f}" if gn is not None else f"Gesamtnote ({hj}): -")
         jn = self.daten.gesamtnote_jahr(sj, kl_name, fach, sk)
@@ -751,11 +723,6 @@ class NotenVerwaltungApp:
             self.fp_lbl.config(text=f"→ {fehlende} Pkt. bis Note {note_str}")
         else:
             self.fp_lbl.config(text="")
-
-        self.m_sp.config(from_=nb[0], to=nb[1])
-        self.m_sp.set(nb[0])
-        self.s_sp.config(from_=nb[0], to=nb[1])
-        self.s_sp.set(nb[0])
 
     def _refresh_bewertung(self, typ: str, keep_selection: Optional[int] = None) -> None:
         """Generischer Refresh für Klausuren- oder UL-Tab."""
@@ -1177,65 +1144,6 @@ class NotenVerwaltungApp:
         self._refresh_noten(None, None)
         self._refresh_klausuren()
         self._refresh_ul()
-
-    def _note_add(self, typ: str) -> None:
-        sj = self._sj()
-        hj = self._hj()
-        kl = self._kl()
-        sk = self._sk()
-        fach = self._fach()
-        if not sj or not kl or not sk or not fach:
-            messagebox.showwarning("Warnung", MSG_WAEHLEN_KL_FACH_SK)
-            return
-        kl_name = self._parse_kl_name(kl)
-        nb = self.daten.get_notenbereich(sj, kl_name)
-        sp = self.m_sp if typ == "muendlich" else self.s_sp
-        try:
-            note = int(sp.get())
-        except ValueError:
-            messagebox.showwarning("Warnung", f"Bitte eine gültige Note ({nb[0]}-{nb[1]}) eingeben!")
-            return
-        if not (nb[0] <= note <= nb[1]):
-            messagebox.showwarning("Warnung", f"Die Note muss zwischen {nb[0]} und {nb[1]} liegen!")
-            return
-        self.daten.note_hinzufuegen(sj, kl_name, fach, sk, hj, typ, note)
-        self._save()
-        self._refresh_noten(kl, sk)
-
-    def _note_del(self, typ: str) -> None:
-        sj = self._sj()
-        hj = self._hj()
-        kl = self._kl()
-        sk = self._sk()
-        fach = self._fach()
-        if not sj or not kl or not sk or not fach:
-            messagebox.showwarning("Warnung", MSG_WAEHLEN_KL_FACH_SK)
-            return
-        kl_name = self._parse_kl_name(kl)
-        lb = self.m_lb if typ == "muendlich" else self.s_lb
-        s = lb.curselection()
-        if not s:
-            messagebox.showwarning("Warnung", "Bitte eine Note zum Löschen auswählen!")
-            return
-        item_text = lb.get(s[0])
-        # Bewertete Noten können nur über ihren Tab gelöscht werden
-        if item_text.strip().startswith("UL:"):
-            messagebox.showinfo("Hinweis", "Bewertete Unterrichtsleistungen können nur über den Tab 'Unterrichtsleistungen' gelöscht werden.")
-            return
-        if item_text.strip().startswith("K:"):
-            messagebox.showinfo("Hinweis", "Klausurnoten können nur über den Tab 'Klausuren' gelöscht werden.")
-            return
-        if not messagebox.askyesno("Bestätigung", "Diese Note wirklich löschen?"):
-            return
-        # Zähle nur manuelle Noten bis zur ausgewählten Position
-        manual_count = 0
-        for i in range(s[0]):
-            txt = lb.get(i).strip()
-            if not txt.startswith(("K:", "UL:")):
-                manual_count += 1
-        self.daten.note_loeschen(sj, kl_name, fach, sk, hj, typ, manual_count)
-        self._save()
-        self._refresh_noten(kl, sk)
 
     # ---- Generische CRUD für Klausuren/UL ----
     def _bewertung_add(self, typ: str) -> None:
